@@ -362,7 +362,7 @@ knowledge_dir = "context-forge"     # 保持默认 ⇒ CF 自己的产物收进 
 
 ## Phase 6.5 · 写代码（D34，2026-10-28）
 
-**要建**：`jmb/code.py`（`write_file` / `edit_file` / `run_command` + `CodeSession`）、`grants` 的写/执行会话授权、`chat` 的工具路由、`tests/test_code_tools.py`。
+**要建**：`jmb/code.py`（`write_file` / `edit_file` / `run_command` + `CodeSession`）、`jmb/search.py`（只读 `grep` / `find`）、`grants` 的写/执行会话授权、`chat` 的工具路由、`tests/test_code_tools.py` + `tests/test_search_tools.py`。
 
 **规则**：
 - **任意路径**；硬拒公司仓、jmb 自身 `spaces/`、`.git` 目录。

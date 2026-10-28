@@ -302,7 +302,7 @@ D5 我从没得到你的回答，但实现的人必须知道，所以我按现�
    ⇒ 你看到的：每次它改自己的文件都会告诉你改了哪一条、怎么说 undo。
 4. **白名单授权**：`grants.json` + 一个"它要读你的代码 → 你点一下"的检查点，**外加 `read_code` 工具本体**（2026-10-27 评审补：原稿只有闸门没有工具，L1 第 5/6 步全押在它上面；带截断预算——单次返回设 token 上限，超了给头部片段 + "文件共 N 行，已截断"）。
    ⇒ 你看到的：它要用某个仓会先问，你同意后留痕。**scope 两档（评审定）**：`session`（默认，会话结束即失效）/ `persistent`（他明说"以后都可以"才落），另有 revoke——白名单只增不减，三个月后 D11 就空了。
-   **D34 写代码（2026-10-28）**：新增 `write_file` / `edit_file` / `run_command`；**任意路径**；写/执行首次触发**本会话**授权（只有 session，不落 persistent）；每个用户轮次一个 change set + preimage，`undo` 回滚整轮；文件之后被改过则拒绝回滚；**命令副作用不可 undo**；公司仓、jmb `spaces/`、`.git` 硬拒。
+   **D34 写代码（2026-10-28）**：新增 `grep` / `find`（只读，走 read 授权，不占 exec）与 `write_file` / `edit_file` / `run_command`；**任意路径**；写/执行首次触发**本会话**授权（只有 session，不落 persistent）；每个用户轮次一个 change set + preimage，`undo` 回滚整轮；文件之后被改过则拒绝回滚；**命令副作用不可 undo**；公司仓、jmb `spaces/`、`.git` 硬拒。
 5. **每日清单任务**：10:00 跑，一天一次；产出进 `sessions`，并由桌宠冒一句（D33 渲染层待做；当前无气泡）。
    ⇒ 你看到的：早上开机，气泡说"今天榜单好了"。
 6. **搜索 + 抓正文两个工具**（§5.4 / §5.5）：搜索用**服务端 Web Search**（Anthropic 官方的 server tool，跨 provider 可移植）+ 本机 Bing 兜底；读正文用 **`trafilatura`**，`llms.txt` 优先。

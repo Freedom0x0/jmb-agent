@@ -732,7 +732,7 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 【用户原话】"任意路径   不分版本一次做完  本会话 按轮次"（回答四问）
 
 【决定】
-- **工具**：`read_code` 扩 `offset/limit`；新增 `write_file` / `edit_file` / `run_command`。
+- **工具**：`read_code` 扩 `offset/limit`；新增 `grep` / `find`（只读，走 read 授权，不占 exec）与 `write_file` / `edit_file` / `run_command`。
 - **写范围**：**任意路径**；保留硬拒：`platform-group-projects`（D11）、jmb 自身 `spaces/`、`.git` 目录。
 - **授权**：读沿用 D11 白名单；写/执行首次触发**本会话**授权，之后本会话放行；**不做 persistent write/exec**。
 - **撤销**：每个用户轮次一个 change set（`changes/code/<turn_id>/manifest.json` + preimage）；`undo` 回滚整轮；文件之后被改过则拒绝回滚；**命令副作用不能 undo**。

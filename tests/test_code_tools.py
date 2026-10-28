@@ -210,6 +210,17 @@ class CodeToolsTest(unittest.TestCase):
         self.session.end_turn()
         self.assertIn("wired", message)
 
+        (self.root / "needle.py").write_text("needle = 1\n", encoding="utf-8")
+        grants.grant(str(self.root))
+        grep_result = chat._dispatch(
+            "grep", {"pattern": "needle", "path": str(self.root), "glob": "*.py"},
+            None, self.session)
+        self.assertIn("needle.py", grep_result)
+        find_result = chat._dispatch(
+            "find", {"path": str(self.root), "name_pattern": "needle.py"},
+            None, self.session)
+        self.assertIn("needle.py", find_result)
+
 
 if __name__ == "__main__":
     unittest.main()
