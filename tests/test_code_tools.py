@@ -17,7 +17,9 @@ class CodeToolsTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self._old_home = os.environ.get("JMB_HOME")
+        self._old_sandbox = os.environ.get("JMB_SANDBOX")
         os.environ["JMB_HOME"] = str(self.root / "home")
+        os.environ["JMB_SANDBOX"] = "host"
         grants.reset_session()
         self.session = code.CodeSession()
 
@@ -28,6 +30,10 @@ class CodeToolsTest(unittest.TestCase):
             os.environ.pop("JMB_HOME", None)
         else:
             os.environ["JMB_HOME"] = self._old_home
+        if self._old_sandbox is None:
+            os.environ.pop("JMB_SANDBOX", None)
+        else:
+            os.environ["JMB_SANDBOX"] = self._old_sandbox
         self.tmp.cleanup()
 
     def test_edit_preserves_bom_and_crlf(self) -> None:

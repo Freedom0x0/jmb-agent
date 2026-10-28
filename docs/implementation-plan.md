@@ -362,17 +362,18 @@ knowledge_dir = "context-forge"     # 保持默认 ⇒ CF 自己的产物收进 
 
 ## Phase 6.5 · 写代码（D34，2026-10-28）
 
-**要建**：`jmb/code.py`（`write_file` / `edit_file` / `run_command` + `CodeSession`）、`jmb/search.py`（只读 `grep` / `find`）、`grants` 的写/执行会话授权、`chat` 的工具路由、`tests/test_code_tools.py` + `tests/test_search_tools.py`。
+**要建**：`jmb/code.py`（`write_file` / `edit_file` / `run_command` + `CodeSession`）、`jmb/search.py`（只读 `grep` / `find`）、`grants` 的写/执行会话授权、`chat` 的工具路由、`tests/test_code_tools.py` + `tests/test_search_tools.py` + `tests/test_sandbox.py` + `tests/test_webfetch.py`。
 
 **规则**：
 - **任意路径**；硬拒公司仓、jmb 自身 `spaces/`、`.git` 目录。
 - 写/执行首次触发**本会话**授权，之后本会话放行；不做 persistent write/exec。
 - `edit_file`：精确优先、唯一、不重叠、模糊归一、保留 BOM/CRLF、返回 diff；`write_file` 只用于新建/完整重写。
 - 每个用户轮次一个 change set + preimage；`undo` 回滚整轮；文件之后被改过则拒绝回滚。
+- **命令默认 Docker 沙箱**：`JMB_SANDBOX_IMAGE`（默认 `python:3.13-slim`）、`--network none`、只读根、cap-drop、2g/2c；只有 `JMB_SANDBOX=host` 才显式关闭。`fetch_page` 拒绝 localhost/内网/回环/保留地址，重定向也检查。
 - **命令副作用不可 undo**；命令输出截断 20KB/800 行，完整输出落盘。
 - 借 Pi 的 `edit`/`read`/`bash`/`truncate` 边界条件，不引 Pi 的 TypeScript runtime/session tree/skills。
 
-**验收**：`python -m unittest discover -s tests` 20 项通过；在临时目录让 jmb 新建/改文件 → 看 diff → `undo` 复原；跑命令 → 退出码/截断/超时；公司仓/spaces/.git 拒写。
+**验收**：`python -m unittest discover -s tests` 39 项通过；在临时目录让 jmb 新建/改文件 → 看 diff → `undo` 复原；跑命令 → 退出码/截断/超时；公司仓/spaces/.git 拒写；Docker 启动后跑一条容器命令（本机 daemon 未运行，待验收时补）。
 
 ---
 

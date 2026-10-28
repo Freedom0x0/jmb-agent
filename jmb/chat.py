@@ -125,8 +125,9 @@ EDIT_FILE = {
 
 RUN_COMMAND = {
     "name": "run_command",
-    "description": ("在指定目录执行 shell 命令（测试/构建/查看）。首次执行会请求本会话授权；"
-                    "输出会截断，完整输出落盘；非零退出如实返回；命令副作用不能 undo。"),
+    "description": ("在指定目录执行 shell 命令（测试/构建/查看）。默认在 Docker 沙箱里执行"
+                    "（JMB_SANDBOX_IMAGE）；只有 JMB_SANDBOX=host 才显式关闭。首次执行会请求"
+                    "本会话授权；输出会截断，完整输出落盘；非零退出如实返回；命令副作用不能 undo。"),
     "input_schema": {"type": "object",
                      "properties": {
                          "command": {"type": "string", "description": "要执行的命令"},

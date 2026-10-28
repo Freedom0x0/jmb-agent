@@ -33,6 +33,9 @@ COMMAND_MAX_LINES = 800
 COMMAND_DEFAULT_TIMEOUT = 120
 COMMAND_MAX_TIMEOUT = 600
 DIFF_MAX_CHARS = 5000
+DEFAULT_SANDBOX_IMAGE = "python:3.13-slim"
+SANDBOX_DEFAULT_MEMORY = "2g"
+SANDBOX_DEFAULT_CPUS = "2"
 BOM = b"\xef\xbb\xbf"
 
 
@@ -252,18 +255,19 @@ class CodeSession:
         self.note_after(path)
 
     def command_log(self, command: str, cwd: str, output: str,
-                    exit_code: int, timed_out: bool) -> Path:
+                    exit_code: int, timed_out: bool, sandbox: str = "") -> Path:
         self._ensure()
         if self.turn_dir is None:
             raise CodeError("change set 未初始化")
         index = len(self.commands) + 1
         log_path = self.turn_dir / f"cmd-{index}.log"
         log_path.write_text(
-            f"$ {command}\ncwd: {cwd}\nexit_code: {exit_code}\ntimeout: {timed_out}\n\n{output}",
+            f"$ {command}\ncwd: {cwd}\nsandbox: {sandbox}\n"
+            f"exit_code: {exit_code}\ntimeout: {timed_out}\n\n{output}",
             encoding="utf-8")
         self.commands.append({"ts": _now(), "command": command, "cwd": cwd,
-                              "exit_code": exit_code, "timed_out": timed_out,
-                              "log": str(log_path)})
+                              "sandbox": sandbox, "exit_code": exit_code,
+                              "timed_out": timed_out, "log": str(log_path)})
         return log_path
 
     def end_turn(self) -> None:
@@ -424,6 +428,55 @@ def _tail(text: str) -> tuple[str, bool]:
     return result, truncated
 
 
+def sandbox_mode() -> str:
+    """默认 docker；只有显式 JMB_SANDBOX=host 才关闭沙箱。"""
+    return "host" if os.environ.get("JMB_SANDBOX", "docker").strip().lower() == "host" else "docker"
+
+
+def docker_daemon_running() -> bool:
+    if not shutil.which("docker"):
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "info", "--format", "{{.ServerVersion}}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def sandbox_summary(check_daemon: bool = False) -> str:
+    mode = sandbox_mode()
+    if mode == "host":
+        return "host（显式关闭，无隔离）"
+    if not shutil.which("docker"):
+        return "docker（找不到 docker 命令）"
+    image = os.environ.get("JMB_SANDBOX_IMAGE") or DEFAULT_SANDBOX_IMAGE
+    network = os.environ.get("JMB_SANDBOX_NETWORK") or "none"
+    daemon = ""
+    if check_daemon:
+        daemon = "，daemon=运行中" if docker_daemon_running() else "，daemon=未运行"
+    return f"docker（image={image}，network={network}{daemon}）"
+
+
+def _docker_argv(command: str, cwd: Path) -> tuple[list[str], str]:
+    image = os.environ.get("JMB_SANDBOX_IMAGE") or DEFAULT_SANDBOX_IMAGE
+    network = os.environ.get("JMB_SANDBOX_NETWORK") or "none"
+    name = f"jmb-cmd-{uuid.uuid4().hex[:10]}"
+    argv = [
+        "docker", "run", "--rm", "--name", name,
+        "--network", network,
+        "--read-only", "--tmpfs", "/tmp",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "--pids-limit", "256", "--memory", SANDBOX_DEFAULT_MEMORY,
+        "--cpus", SANDBOX_DEFAULT_CPUS,
+        "-e", "HOME=/tmp",
+        "-v", f"{cwd}:/work", "-w", "/work",
+        image, "sh", "-lc", command,
+    ]
+    return argv, name
+
+
 def run_command(command: str, cwd: str | None, timeout, session: CodeSession) -> str:
     if not isinstance(command, str) or not command.strip():
         raise CodeError("command 不能为空")
@@ -445,6 +498,16 @@ def run_command(command: str, cwd: str | None, timeout, session: CodeSession) ->
     if spaces and spaces in low:
         raise CodeError("命令触碰 jmb 自身数据目录，拒绝执行。")
 
+    mode = sandbox_mode()
+    container = None
+    if mode == "docker":
+        if not shutil.which("docker"):
+            raise CodeError(
+                "找不到 docker 命令：启动 Docker Desktop，或显式 JMB_SANDBOX=host 关闭沙箱。")
+        argv, container = _docker_argv(command, cwd_path)
+    else:
+        argv = _shell_argv(command)
+
     kwargs = {}
     if os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -452,13 +515,18 @@ def run_command(command: str, cwd: str | None, timeout, session: CodeSession) ->
         kwargs["start_new_session"] = True
     started = time.monotonic()
     process = subprocess.Popen(
-        _shell_argv(command), cwd=str(cwd_path), stdin=subprocess.DEVNULL,
+        argv, cwd=str(cwd_path), stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kwargs)
     timed_out = False
     try:
         output, _ = process.communicate(timeout=seconds)
     except subprocess.TimeoutExpired:
         timed_out = True
+        if container:
+            subprocess.run(["docker", "kill", container],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["docker", "rm", "-f", container],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         _kill_tree(process)
         try:
             output, _ = process.communicate(timeout=5)
@@ -468,7 +536,8 @@ def run_command(command: str, cwd: str | None, timeout, session: CodeSession) ->
     exit_code = -1 if timed_out else (process.returncode if process.returncode is not None else -1)
     text = output.decode("utf-8", "replace")
     tail, truncated = _tail(text)
-    log_path = session.command_log(command, str(cwd_path), text, exit_code, timed_out)
-    head = f"exit_code={exit_code} time={elapsed:.1f}s" + (" TIMEOUT" if timed_out else "")
+    log_path = session.command_log(command, str(cwd_path), text, exit_code, timed_out, mode)
+    head = (f"exit_code={exit_code} mode={mode} time={elapsed:.1f}s"
+            + (" TIMEOUT" if timed_out else ""))
     note = "\n[输出已截断]" if truncated else ""
     return f"{head}\n{tail}{note}\n[完整输出: {log_path}]"
