@@ -167,7 +167,9 @@ def authorize_exec(command: str, cwd: str, interactive: bool) -> tuple[bool, str
         return False, "执行命令需要授权，但他不在终端旁（本次是管道运行）：按设计拒绝。"
     print(f"jmb 想执行命令：{command[:300]}")
     print(f"工作目录：{cwd}")
-    print("（命令以你的系统权限执行，jmb 没有沙箱；本会话后续命令不再逐次询问，副作用不能 undo。）")
+    mode = os.environ.get("JMB_SANDBOX", "docker").strip().lower() or "docker"
+    sandbox = "host（无隔离）" if mode == "host" else "docker"
+    print(f"（沙箱：{sandbox}；本会话后续命令不再逐次询问，副作用不能 undo。）")
     try:
         answer = input("允许本会话执行命令吗？[y/n] > ").strip().lower()
     except (EOFError, KeyboardInterrupt):

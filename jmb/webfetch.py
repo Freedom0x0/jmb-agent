@@ -9,7 +9,10 @@ bing_search：cn.bing.com 是本机唯一实测通的搜索腿（spec §5.4）�
 """
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
+import urllib.error
 import urllib.parse
 import urllib.request
 from html import unescape
@@ -24,9 +27,49 @@ _BOT_WALL = ("enable javascript", "just a moment", "verify you are human", "acce
              "请开启 javascript", "请启用 javascript", "captcha")
 
 
+def url_is_public(url: str) -> bool:
+    """只允许公网 http(s)：拒绝 localhost、内网、回环、链路本地、保留地址。"""
+    parts = urllib.parse.urlparse(url)
+    if parts.scheme not in {"http", "https"}:
+        return False
+    host = (parts.hostname or "").strip().strip("[]").lower()
+    if not host:
+        return False
+    if (host in {"localhost", "localhost.localdomain"}
+            or host.endswith(".local") or host.endswith(".internal")):
+        return False
+    try:
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except (OSError, ValueError):
+        return False
+    for info in infos:
+        address = str(info[4][0]).split("%")[0]
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            return False
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
+            return False
+    return True
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not url_is_public(newurl):
+            raise urllib.error.URLError(f"重定向到非公网地址：{newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_SafeRedirectHandler())
+
+
 def _get(url: str, timeout: int = 25, headers: dict | None = None) -> tuple[str, str]:
+    if not url_is_public(url):
+        raise urllib.error.URLError(f"非公网地址：{url}")
     request = urllib.request.Request(url, headers=headers or _UA)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with _OPENER.open(request, timeout=timeout) as response:
         charset = response.headers.get_content_charset() or "utf-8"
         return response.read().decode(charset, "replace"), response.headers.get("content-type", "")
 
@@ -71,8 +114,12 @@ def fetch_page(url: str) -> str:
     url = url.strip()
     if not re.match(r"^https?://", url):
         return f"读不到：不是 http(s) 链接（{url[:60]}）。"
+    if not url_is_public(url):
+        return "读不到正文：只允许公网 http(s) 地址（localhost/内网被拒）。"
     try:
         page, ctype = _get(url, headers=_READ_UA)
+    except urllib.error.URLError as exc:
+        return f"读不到正文：{exc}"
     except OSError as exc:
         kind = "超时" if isinstance(exc, TimeoutError) or "timed out" in str(exc) else "抓取失败"
         return f"读不到正文：{kind}（{type(exc).__name__}）——404/403/超时都是正常结果，不是异常。"
