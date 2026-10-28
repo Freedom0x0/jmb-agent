@@ -39,6 +39,7 @@
 | D32 | CF 独立包依赖、不共用记忆、jmb 独立打包 | ✅（2026-10-28 他定的） |
 | D33 | 桌宠渲染层内置 jmb，不用 Petdex 外接/sidecar | ✅ 方向已定，实现后做 |
 | D34 | 写代码：任意路径 / 本会话授权 / 按轮次 undo | ✅（2026-10-28 他定的） |
+| D35 | app 壳 v1 = Tkinter 聊天窗口 + 内置桌宠；PySide6 后换 | ✅ v1 已落地，待验收 |
 
 > ⚠️ **日期标签更正**：本文件与 `docs/research/*.md` 里所有写着"2026-10-13"的条目，**实际都产出于 2026-10-26**（10-13 是我一开始误抄的日期，一路沿用到 D24）。内容和数字本身不受影响，但别拿"10-13"当时间线索引。新条目一律标 10-26。
 
@@ -723,7 +724,7 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 - **代价写明**：桌宠生命周期跟 jmb 走——jmb 不跑，桌宠不出现。要"关掉 jmb 还留着"就是另一个形状（A 或托盘后台），不选。
 
 【依赖】D32（jmb 独立 app）、D4'（入口形态）、D24（每日清单主动冒泡）。
-【状态】✅ 方向已定；实现推迟，待与渲染层/app 壳一起做。
+【状态】✅ 方向已定；v1 Tkinter app 壳 + Canvas 桌宠已落地（D35）；PySide6/spritesheet 后做。
 
 ---
 
@@ -751,6 +752,26 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 - 项目上下文/compaction 未做；OpenAI 线工具结果顺序仍是已知问题（本轮未修）。
 
 【状态】✅ 已落地；测试见 `tests/test_code_tools.py`、`tests/test_search_tools.py`、`tests/test_sandbox.py`、`tests/test_webfetch.py`。Docker 容器路径待启动 Docker 后验收。
+
+---
+
+## D35 app 壳 v1：Tkinter 聊天窗口 + 内置桌宠 ✅（2026-10-29，**按他"下一步做app壳和渲染层"落地**）
+
+【用户原话】"下一步做app壳和渲染层"
+
+【决定】
+- `jmb app` 打开 Tkinter 聊天窗口 + 透明置顶 `PetWindow`；终端 `jmb chat` 保留；两者共用 `ChatSession`（模型/工具/记忆/代码改动一份）。
+- 框架先 **Tkinter**（stdlib、零安装）。PySide6 在这台机器上安装卡住（下载/解包十几分钟未进 venv；磁盘 8.6GB、可用内存 0.53GB），按 D33 备选回退；PySide6 后换。
+- 渲染 v1：Canvas 占位形象 + idle/thinking/searching/working/failed/waving + 气泡 + 拖拽；暂未接 `pet.json`/spritesheet、托盘、严格点击穿透。
+- 授权：GUI 读/写/执行走 worker→主窗口 `messagebox` 回调（`grants.set_prompt_handler`），不再依赖 stdin。
+- 记忆收尾确认未接 GUI；候选事实留到下次终端 `jmb chat` 确认（TODO）。
+- 分支 `feat/app-shell-renderer` 合并了 `feat/code-search-sandbox`（#6），所以 app 里直接有 grep/find 和 Docker 沙箱。
+
+【验证】44 项测试通过：app smoke、ChatWorker ready/stop、GUI permission handler、grep/find、沙箱/SSRF、code tools。
+
+【已知短板】Tkinter 视觉/点击穿透弱；无 undo 按钮（终端 undo 仍在）；无托盘；PySide6 未装；真实 sprite 未接。
+
+【状态】✅ v1 已落地，待验收；PySide6/真实 sprite 后续。
 
 ---
 

@@ -278,27 +278,101 @@ _SELF_ANNOUNCE = {"update_self_file"}
 _CODE_ANNOUNCE = {"write_file", "edit_file", "run_command"}
 
 
+class ChatSession:
+    """终端和 GUI 共用：模型/工具/记忆/代码改动都在这里，入口只负责收事件。"""
+
+    def __init__(self, emit) -> None:
+        self.emit = emit
+        seeds.ensure()
+        self.profile = providers.load_profile()
+        if self.profile.protocol == "anthropic" and not config.resolve_token().value:
+            raise RuntimeError("没有模型凭据——先跑 `jmb doctor` 看 token 那一行。")
+
+        self.fact_memory = None
+        try:
+            from . import memory as jmb_memory
+            self.fact_memory = jmb_memory.FactMemory()
+        except Exception as exc:  # noqa: BLE001 —— 记忆半边不可用不阻塞对话
+            self.emit("warning", f"[长期事实记忆没接上：{type(exc).__name__}: "
+                                f"{str(exc)[:120]}——本会话只能用文件记录]")
+
+        self.code_session = code.CodeSession()
+        self.count_fn = None
+        if self.profile.protocol == "anthropic":
+            import anthropic
+            client = anthropic.Anthropic(base_url=self.profile.base_url,
+                                         auth_token=config.resolve_token().value,
+                                         timeout=120.0, max_retries=1)
+            self.count_fn = lambda system, tools, history: (  # noqa: E731
+                client.messages.count_tokens(model=self.profile.model, system=system,
+                                             tools=tools, messages=history).input_tokens)
+
+        self.system = prefix.build_system()
+        self.tools = _tools(self.profile)
+        config.sessions_dir().mkdir(parents=True, exist_ok=True)
+        self.tid = uuid.uuid4().hex[:6]
+        self.transcript_path = config.sessions_dir() / f"{_dt.date.today().isoformat()}-{self.tid}.jsonl"
+        self.log = self.transcript_path.open("a", encoding="utf-8")
+        self.history: list[dict] = []
+        self.closed = False
+
+    def send(self, text: str) -> None:
+        user = (text or "").strip()
+        if not user:
+            return
+        send_text = user
+        if self.fact_memory:
+            recalled = self.fact_memory.search(user)
+            if recalled:
+                send_text = f"[记忆召回——他以前说过的事，可自然引用]\n{recalled}\n\n{user}"
+        self.history.append({"role": "user", "content": send_text})
+        self.log.write(json.dumps({"ts": _now(), "kind": "user", "text": user},
+                                  ensure_ascii=False) + "\n")
+        self.log.flush()
+        try:
+            self.code_session.begin_turn()
+            _stream_turn(self.profile, self.count_fn, self.system, self.tools,
+                         self.history, self.log, self.fact_memory, self.code_session,
+                         self.emit)
+        except Exception as exc:  # noqa: BLE001 —— 一轮失败不拖垮会话
+            self.emit("error", f"{type(exc).__name__}: {str(exc)[:300]}")
+        finally:
+            self.code_session.end_turn()
+            self.emit("turn_end", {"transcript": str(self.transcript_path)})
+
+    def undo(self) -> str:
+        return self.code_session.undo_last_turn() or gate.undo()
+
+    def confirm_pending(self, interactive: bool) -> str:
+        return self.fact_memory.confirm_pending(interactive=interactive) if self.fact_memory else ""
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        try:
+            self.log.close()
+        finally:
+            self.closed = True
+
+
 def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log,
-                 fact_memory, code_session) -> None:
+                 fact_memory, code_session, emit) -> None:
     thinking_shown = False
 
     def on_event(kind: str, text: str = "") -> None:
         nonlocal thinking_shown
-        if kind == "thinking" and not thinking_shown:
-            print("（它在想……）", flush=True)
-            thinking_shown = True
-        elif kind == "search":
-            print("（联网搜索中……）", flush=True)
-        elif kind == "text_start":
-            print(flush=True)
-        elif kind == "text":
-            print(text, end="", flush=True)
+        if kind == "thinking":
+            if not thinking_shown:
+                emit("thinking", "")
+                thinking_shown = True
+        else:
+            emit(kind, text)
 
     while True:
         _enforce_budget(count_fn, profile, system, tools, history)
         turn = providers.stream_turn(profile, system, tools, history, on_event)
-        print()
-        print(f"  └ {_usage_line(turn.usage)}")
+        emit("text_end", "")
+        emit("usage", turn.usage)
         log.write(json.dumps({"ts": _now(), "kind": "assistant", "blocks": turn.blocks,
                               "usage": turn.usage}, ensure_ascii=False) + "\n")
         log.flush()
@@ -313,22 +387,21 @@ def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log
                 continue
             name, payload = block.get("name", ""), dict(block.get("input") or {})
             if name == "fetch_page":
-                print(f"（抓正文：{str(payload.get('url', ''))[:80]}…）", flush=True)
+                emit("activity", f"（抓正文：{str(payload.get('url', ''))[:80]}…）")
             elif name == "grep":
-                print(f"（搜代码：{str(payload.get('pattern', ''))[:60]}）", flush=True)
+                emit("activity", f"（搜代码：{str(payload.get('pattern', ''))[:60]}）")
             elif name == "find":
-                print(f"（找文件：{str(payload.get('name_pattern') or '*')[:60]}）", flush=True)
+                emit("activity", f"（找文件：{str(payload.get('name_pattern') or '*')[:60]}）")
             elif name == "remember_fact" and fact_memory and str(payload.get("fact", "")).strip():
-                print("（想记一条事实，收尾时让你确认）", flush=True)
+                emit("activity", "（想记一条事实，收尾时让你确认）")
             receipt = _dispatch(name, payload, fact_memory, code_session)
             if name in _SELF_ANNOUNCE:
                 note = str(payload.get("note", "")).strip()
-                print(f"\n  [jmb 改了 {payload.get('target', '?')}，说 undo 可撤]{('——' + note) if note else ''}")
+                emit("self_edit", {"target": payload.get("target", "?"), "note": note})
                 log.write(json.dumps({"ts": _now(), "kind": "self_edit", "decision": payload,
                                       "receipt": receipt}, ensure_ascii=False) + "\n")
             elif name in _CODE_ANNOUNCE:
-                shown = receipt[:3000] + ("…" if len(receipt) > 3000 else "")
-                print(f"\n  [jmb {name}]\n{shown}")
+                emit("code", {"name": name, "receipt": receipt})
                 log.write(json.dumps({"ts": _now(), "kind": "code_tool", "name": name,
                                       "input": payload, "receipt": receipt},
                                      ensure_ascii=False) + "\n")
@@ -337,49 +410,51 @@ def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log
         history.append({"role": "user", "content": results})
 
 
+def _terminal_emit(kind: str, data) -> None:
+    if kind == "text":
+        print(data, end="", flush=True)
+    elif kind == "text_start":
+        print(flush=True)
+    elif kind == "text_end":
+        print()
+    elif kind == "thinking":
+        print("（它在想……）", flush=True)
+    elif kind == "search":
+        print("（联网搜索中……）", flush=True)
+    elif kind == "usage":
+        print(f"  └ {_usage_line(data)}")
+    elif kind == "activity":
+        print(str(data), flush=True)
+    elif kind == "warning":
+        print(str(data), flush=True)
+    elif kind == "self_edit":
+        note = str(data.get("note", "")).strip()
+        print(f"\n  [jmb 改了 {data.get('target', '?')}，说 undo 可撤]"
+              f"{('——' + note) if note else ''}")
+    elif kind == "code":
+        receipt = str(data.get("receipt", ""))
+        shown = receipt[:3000] + ("…" if len(receipt) > 3000 else "")
+        print(f"\n  [jmb {data.get('name')}]\n{shown}")
+    elif kind == "error":
+        print(f"\n[这一轮出错：{data}]")
+        print("（历史已保留，换个说法再说，或 /quit）")
+    elif kind == "turn_end":
+        pass
+
+
 def run() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    seeds.ensure()
-
-    profile = providers.load_profile()
-    if profile.protocol == "anthropic" and not config.resolve_token().value:
-        print("没有模型凭据——先跑 `jmb doctor` 看 token 那一行。")
+    try:
+        session = ChatSession(_terminal_emit)
+    except Exception as exc:  # noqa: BLE001
+        print(f"{type(exc).__name__}: {exc}")
         return 1
 
-    fact_memory = None
-    try:
-        from . import memory as jmb_memory
-        fact_memory = jmb_memory.FactMemory()
-    except Exception as exc:  # noqa: BLE001 —— 记忆半边不可用不阻塞对话
-        print(f"[长期事实记忆没接上：{type(exc).__name__}: {str(exc)[:120]}——本会话只能用文件记录]")
-
-    code_session = code.CodeSession()
-
-    count_fn = None
-    if profile.protocol == "anthropic":
-        import anthropic
-        model = profile.model
-        client = anthropic.Anthropic(base_url=profile.base_url,
-                                     auth_token=config.resolve_token().value,
-                                     timeout=120.0, max_retries=1)
-        count_fn = lambda system, tools, history: (  # noqa: E731
-            client.messages.count_tokens(model=model, system=system, tools=tools,
-                                         messages=history).input_tokens)
-
-    system = prefix.build_system()
-    tools = _tools(profile)
-
-    config.sessions_dir().mkdir(parents=True, exist_ok=True)
-    tid = uuid.uuid4().hex[:6]
-    tpath = config.sessions_dir() / f"{_dt.date.today().isoformat()}-{tid}.jsonl"
-    log = tpath.open("a", encoding="utf-8")
-
-    print(f"jmb · 会话 {tid}（线路 {profile.name} · 转录 {tpath.name}）")
+    print(f"jmb · 会话 {session.tid}（线路 {session.profile.name} · 转录 {session.transcript_path.name}）")
     print("命令：/quit 退出 · undo 撤回最近一轮代码改动或最近一次自我改写 · 其余都是对话")
     print("——流式出字；（联网搜索中…）服务端搜索；（抓正文…）fetch_page\n")
 
-    history: list[dict] = []
     try:
         while True:
             try:
@@ -392,31 +467,11 @@ def run() -> int:
             if user in {"/quit", "/exit", "q"}:
                 break
             if user.lower() == "undo":
-                print(code_session.undo_last_turn() or gate.undo())
+                print(session.undo())
                 continue
-
-            send_text = user
-            if fact_memory:
-                recalled = fact_memory.search(user)
-                if recalled:
-                    send_text = f"[记忆召回——他以前说过的事，可自然引用]\n{recalled}\n\n{user}"
-            history.append({"role": "user", "content": send_text})
-            log.write(json.dumps({"ts": _now(), "kind": "user", "text": user}, ensure_ascii=False) + "\n")
-            log.flush()
-            try:
-                code_session.begin_turn()
-                _stream_turn(profile, count_fn, system, tools, history, log,
-                             fact_memory, code_session)
-            except Exception as exc:  # noqa: BLE001 —— 一轮失败不拖垮会话
-                print(f"\n[这一轮出错：{type(exc).__name__}: {str(exc)[:300]}]")
-                print("（历史已保留，换个说法再说，或 /quit）")
-            finally:
-                code_session.end_turn()
+            session.send(user)
     finally:
-        if code_session.turn_id:
-            code_session.end_turn()
-        if fact_memory:
-            print(fact_memory.confirm_pending(interactive=sys.stdin.isatty()))
-        log.close()
-    print(f"\n再见。转录在 {tpath}")
+        print(session.confirm_pending(interactive=sys.stdin.isatty()))
+        session.close()
+    print(f"\n再见。转录在 {session.transcript_path}")
     return 0

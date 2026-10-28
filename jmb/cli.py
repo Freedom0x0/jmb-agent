@@ -92,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("doctor", help="体检：家目录/端点/模型名/token 长度/CF 家目录/今日日报")
     sub.add_parser("chat", help="对话：流式、SOUL 人格、服务端搜索、读正文、记忆、白名单读码")
     sub.add_parser("brief", help="每日清单（三源、零模型调用、幂等；10:00 定时跑同一命令）")
+    sub.add_parser("app", help="桌面 app：聊天窗口 + 内置桌宠（Tkinter）")
     args = parser.parse_args(argv)
     if args.command == "doctor":
         return cmd_doctor(args)
@@ -101,6 +102,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "brief":
         from . import brief
         return brief.run()
+    if args.command == "app":
+        try:
+            from .app.main import run as run_app
+        except Exception as exc:  # noqa: BLE001
+            print(f"app 启动失败：{type(exc).__name__}: {exc}")
+            return 1
+        return run_app()
     parser.print_help()
     return 0 if args.command else 2
 

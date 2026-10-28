@@ -136,6 +136,15 @@ class CodeToolsTest(unittest.TestCase):
             ok, _ = grants.authorize_write(str(target), interactive=True)
         self.assertFalse(ok)
 
+    def test_prompt_handler_can_answer_without_tty(self) -> None:
+        target = self.root / "handler.py"
+        grants.set_prompt_handler(lambda prompt: "y")
+        try:
+            ok, _ = grants.authorize_write(str(target), interactive=False)
+        finally:
+            grants.set_prompt_handler(None)
+        self.assertTrue(ok)
+
     def test_authorize_exec_is_session_scoped(self) -> None:
         with mock.patch("builtins.input", return_value="y"):
             ok, _ = grants.authorize_exec("echo hi", str(self.root), interactive=True)

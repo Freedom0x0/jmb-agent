@@ -19,6 +19,19 @@ READ_CHAR_BUDGET = 20000
 _session_grants: set[str] = set()
 _write_session = False
 _exec_session = False
+_prompt_handler = None
+
+
+def set_prompt_handler(handler) -> None:
+    """GUI 用：让授权检查点走弹窗而不是 stdin.input。"""
+    global _prompt_handler
+    _prompt_handler = handler
+
+
+def _ask(prompt: str) -> str:
+    if _prompt_handler is not None:
+        return str(_prompt_handler(prompt)).strip().lower()
+    return input(prompt).strip().lower()
 
 
 def _norm(path: str) -> str:
@@ -96,11 +109,12 @@ def records() -> list[dict]:
 
 
 def reset_session() -> None:
-    """测试/新会话用：清掉本会话的读、写、执行授权。"""
-    global _write_session, _exec_session
+    """测试/新会话用：清掉本会话的读、写、执行授权与 UI 回调。"""
+    global _write_session, _exec_session, _prompt_handler
     _session_grants.clear()
     _write_session = False
     _exec_session = False
+    _prompt_handler = None
 
 
 def authorize(path: str, action: str, interactive: bool) -> tuple[bool, str]:
@@ -113,10 +127,12 @@ def authorize(path: str, action: str, interactive: bool) -> tuple[bool, str]:
         return False, "这个路径在默认拒绝清单里，不读。"
     if state == "granted":
         return True, ""
-    if not interactive:
+    if not interactive and _prompt_handler is None:
         return False, "需要授权，但他不在终端旁（本次是管道运行）：按设计默认拒绝。"
     try:
-        answer = input(f"jmb 想读你的代码（{action} {path}）。允许吗？[y=仅本次会话 / a=以后都行 / n=不行] > ").strip().lower()
+        answer = _ask(
+            f"jmb 想读你的代码（{action} {path}）。允许吗？"
+            "[y=仅本次会话 / a=以后都行 / n=不行] > ")
     except (EOFError, KeyboardInterrupt):
         return False, "没拿到授权，就不读。"
     if answer not in {"y", "a", "yes", "all"}:
@@ -133,13 +149,12 @@ def authorize_write(path: str, interactive: bool) -> tuple[bool, str]:
         return False, reason
     if _write_session:
         return True, ""
-    if not interactive:
+    if not interactive and _prompt_handler is None:
         return False, "写代码需要授权，但他不在终端旁（本次是管道运行）：按设计拒绝。"
     try:
-        answer = input(
+        answer = _ask(
             f"jmb 想写/改你的代码（{path}）。允许本会话写代码吗？[y/n]"
-            "（本会话后续写/改不再逐次询问；公司仓/jmb 数据目录/.git 仍硬拒） > "
-        ).strip().lower()
+            "（本会话后续写/改不再逐次询问；公司仓/jmb 数据目录/.git 仍硬拒） > ")
     except (EOFError, KeyboardInterrupt):
         return False, "没拿到授权，就不写。"
     if answer not in {"y", "yes"}:
@@ -163,15 +178,19 @@ def authorize_exec(command: str, cwd: str, interactive: bool) -> tuple[bool, str
         return False, "命令触碰 jmb 自身数据目录，拒绝执行。"
     if _exec_session:
         return True, ""
-    if not interactive:
+    if not interactive and _prompt_handler is None:
         return False, "执行命令需要授权，但他不在终端旁（本次是管道运行）：按设计拒绝。"
-    print(f"jmb 想执行命令：{command[:300]}")
-    print(f"工作目录：{cwd}")
     mode = os.environ.get("JMB_SANDBOX", "docker").strip().lower() or "docker"
     sandbox = "host（无隔离）" if mode == "host" else "docker"
-    print(f"（沙箱：{sandbox}；本会话后续命令不再逐次询问，副作用不能 undo。）")
+    details = (f"jmb 想执行命令：{command[:300]}\n工作目录：{cwd}\n"
+               f"沙箱：{sandbox}；本会话后续命令不再逐次询问，副作用不能 undo。")
+    if _prompt_handler is None:
+        print(details)
+        prompt = "允许本会话执行命令吗？[y/n] > "
+    else:
+        prompt = details + "\n允许本会话执行命令吗？[y/n]"
     try:
-        answer = input("允许本会话执行命令吗？[y/n] > ").strip().lower()
+        answer = _ask(prompt)
     except (EOFError, KeyboardInterrupt):
         return False, "没拿到授权，就不执行。"
     if answer not in {"y", "yes"}:
