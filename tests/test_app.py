@@ -26,7 +26,8 @@ class AppSmokeTest(unittest.TestCase):
             pet.set_state("thinking")
             pet.bubble("hello", 1000)
             pet.win.update_idletasks()
-            self.assertGreater(len(pet.canvas.find_all()), 5)
+            self.assertGreaterEqual(len(pet.canvas.find_all()), 1)
+            self.assertTrue(pet._sprite_frames)
             pet.close()
         finally:
             root.destroy()

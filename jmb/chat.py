@@ -343,8 +343,9 @@ class ChatSession:
     def undo(self) -> str:
         return self.code_session.undo_last_turn() or gate.undo()
 
-    def confirm_pending(self, interactive: bool) -> str:
-        return self.fact_memory.confirm_pending(interactive=interactive) if self.fact_memory else ""
+    def confirm_pending(self, interactive: bool, ask=None) -> str:
+        return (self.fact_memory.confirm_pending(interactive=interactive, ask=ask)
+                if self.fact_memory else "")
 
     def close(self) -> None:
         if self.closed:

@@ -20,8 +20,10 @@ class ChatWorker(threading.Thread):
     def __init__(self) -> None:
         super().__init__(daemon=True)
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
-        self.inbox: queue.Queue[str | None] = queue.Queue()
+        self.inbox: queue.Queue[object] = queue.Queue()
         self.pending_permissions: dict[str, dict] = {}
+        self.confirm_event = threading.Event()
+        self.confirm_answer = "no"
         self.session = None
 
     def run(self) -> None:
@@ -41,10 +43,22 @@ class ChatWorker(threading.Thread):
                 "transcript": str(self.session.transcript_path),
             }))
             while True:
-                text = self.inbox.get()
-                if text is None:
+                item = self.inbox.get()
+                if item is None:
                     break
-                self.session.send(text)
+                if isinstance(item, tuple) and item and item[0] == "__stop__":
+                    try:
+                        self.session.confirm_pending(interactive=True,
+                                                     ask=self._ask_confirmation)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    self.session.close()
+                    self.events.put(("closed", None))
+                    return
+                if isinstance(item, tuple) and item and item[0] == "__undo__":
+                    self.events.put(("undo", self.session.undo()))
+                    continue
+                self.session.send(str(item))
             try:
                 pending = self.session.confirm_pending(interactive=False)
                 if pending:
@@ -52,6 +66,7 @@ class ChatWorker(threading.Thread):
             except Exception:  # noqa: BLE001
                 pass
             self.session.close()
+            self.events.put(("closed", None))
         finally:
             grants.set_prompt_handler(None)
 
@@ -73,14 +88,33 @@ class ChatWorker(threading.Thread):
             item["answer"] = bool(ok)
             item["event"].set()
 
+    def _ask_confirmation(self, items, more: int) -> str:
+        self.confirm_event = threading.Event()
+        self.confirm_answer = "no"
+        self.events.put(("confirm", {"items": items, "more": more}))
+        self.confirm_event.wait(timeout=300)
+        return self.confirm_answer
+
+    def answer_confirmation(self, answer: str) -> None:
+        self.confirm_answer = str(answer)
+        self.confirm_event.set()
+
     def send(self, text: str) -> None:
         self.inbox.put(text)
 
-    def stop(self) -> None:
+    def undo(self) -> None:
+        self.inbox.put(("__undo__", None))
+
+    def request_stop(self) -> None:
         for item in list(self.pending_permissions.values()):
             item["answer"] = False
             item["event"].set()
-        self.inbox.put(None)
+        self.confirm_answer = "no"
+        self.confirm_event.set()
+        self.inbox.put(("__stop__", None))
+
+    def stop(self) -> None:
+        self.request_stop()
         self.join(timeout=5)
 
 
@@ -93,6 +127,7 @@ class MainWindow(tk.Tk):
         self.configure(bg=BG)
         self.busy = False
         self._closing = False
+        self._destroyed = False
         self._poll_id: str | None = None
         self.worker: ChatWorker | None = None
         self.pet = PetWindow(self)
@@ -104,6 +139,7 @@ class MainWindow(tk.Tk):
             self.status.config(text="未启动 worker")
             self.entry.config(state="normal")
             self.button.config(state="normal")
+            self.undo_button.config(state="normal")
         self.protocol("WM_DELETE_WINDOW", self.close)
         self._poll_id = self.after(50, self._poll)
 
@@ -149,6 +185,12 @@ class MainWindow(tk.Tk):
             activeforeground="white", relief="flat", padx=18, pady=6,
             font=("Microsoft YaHei UI", 10))
         self.button.grid(row=0, column=1, padx=(8, 0))
+        self.undo_button = tk.Button(
+            bottom, text="撤销", command=self.undo, state="disabled",
+            bg="#3a3d42", fg=TEXT, activebackground="#4a4d52",
+            activeforeground=TEXT, relief="flat", padx=14, pady=6,
+            font=("Microsoft YaHei UI", 10))
+        self.undo_button.grid(row=0, column=2, padx=(8, 0))
 
         self.status = tk.Label(
             self, text="准备中…", bg=BG, fg=MUTED, anchor="w",
@@ -174,9 +216,16 @@ class MainWindow(tk.Tk):
         self.busy = True
         self.entry.config(state="disabled")
         self.button.config(state="disabled")
+        self.undo_button.config(state="disabled")
         self.pet.set_state("thinking")
         self.status.config(text="它收到了，在想…")
         self.worker.send(text)
+
+    def undo(self) -> None:
+        if self.busy or self.worker is None:
+            return
+        self.undo_button.config(state="disabled")
+        self.worker.undo()
 
     def _poll(self) -> None:
         try:
@@ -185,7 +234,7 @@ class MainWindow(tk.Tk):
                 self._on_event(kind, data)
         except queue.Empty:
             pass
-        if not self._closing:
+        if not self._destroyed:
             self._poll_id = self.after(50, self._poll)
 
     def events_get(self) -> tuple[str, object]:
@@ -200,6 +249,7 @@ class MainWindow(tk.Tk):
             if not self.busy:
                 self.entry.config(state="normal")
                 self.button.config(state="normal")
+                self.undo_button.config(state="normal")
                 self.entry.focus_set()
         elif kind == "text_start":
             self._append("jmb> ", "assistant")
@@ -234,17 +284,36 @@ class MainWindow(tk.Tk):
             receipt = str(data.get("receipt", ""))
             self._append(f"[{data.get('name')}]\n{receipt[:2000]}\n", "meta")
             self.pet.set_state("working")
+        elif kind == "undo":
+            self._append(f"[undo] {data}\n", "edit")
+            self.pet.set_state("waving")
+            self.undo_button.config(state="normal")
         elif kind == "error":
             self._append(f"[这一轮出错：{data}]\n", "error")
             self.pet.set_state("failed")
         elif kind == "permission":
-            ok = messagebox.askyesno("jmb 需要授权", str(data.get("text", "")))
+            ok = messagebox.askyesno("jmb 需要授权", str(data.get("text", "")), parent=self)
             if self.worker is not None:
                 self.worker.answer_permission(str(data.get("id", "")), ok)
+        elif kind == "confirm":
+            items = data.get("items", [])
+            more = data.get("more", 0)
+            text = "\n".join(f"{i}) {body}" for i, body in enumerate(items, 1))
+            if more:
+                text += f"\n（还有 {more} 条下次再问）"
+            text += "\n\n全部记进长期记忆吗？选“否”会全部不要。"
+            ok = messagebox.askyesno("jmb 会话收尾", text, parent=self)
+            if self.worker is not None:
+                self.worker.answer_confirmation("ok" if ok else "no")
+        elif kind == "closed":
+            if self.worker is not None:
+                self.worker.join(timeout=1)
+            self._finish_close()
         elif kind == "turn_end":
             self.busy = False
             self.entry.config(state="normal")
             self.button.config(state="normal")
+            self.undo_button.config(state="normal")
             self.entry.focus_set()
             self.pet.set_state("idle")
         elif kind == "fatal":
@@ -253,16 +322,28 @@ class MainWindow(tk.Tk):
             messagebox.showerror("jmb 启动失败", str(data))
 
     def close(self) -> None:
-        if self._closing:
+        if self._destroyed or self._closing:
             return
         self._closing = True
+        if self.worker is not None and self.worker.is_alive():
+            self.status.config(text="收尾中…")
+            self.entry.config(state="disabled")
+            self.button.config(state="disabled")
+            self.undo_button.config(state="disabled")
+            self.pet.set_state("waiting")
+            self.worker.request_stop()
+            return
+        self._finish_close()
+
+    def _finish_close(self) -> None:
+        if self._destroyed:
+            return
+        self._destroyed = True
         if self._poll_id is not None:
             try:
                 self.after_cancel(self._poll_id)
             except tk.TclError:
                 pass
-        if self.worker is not None:
-            self.worker.stop()
         self.pet.close()
         self.destroy()
 

@@ -117,25 +117,33 @@ class FactMemory:
                 out.append(f"没丢成（{type(exc).__name__}: {str(exc)[:80]}）：{item['body'][:48]}")
         return "\n".join(out)
 
-    def confirm_pending(self, interactive: bool) -> str:
-        """会话收尾批量确认。非终端（管道）运行一律不批——from_tty 守卫的语义。"""
+    def confirm_pending(self, interactive: bool, ask=None) -> str:
+        """会话收尾批量确认。非终端（管道）运行一律不批——from_tty 守卫的语义。
+
+        ask 是 GUI 回调：接收 (items, more)，返回 "ok"/"no"/序号串；不传就退回终端 input。
+        """
         items, more = self._offers()
         self.pending.clear()
         if not items:
             return ""
-        if not interactive:
+        if ask is not None:
+            answer = str(ask([item["body"] for item in items], more)).strip().lower()
+        elif not interactive:
             return (f"[有 {len(items)} 条待确认事实，但本次不是终端运行——按设计不批，留到下次；"
                     f"要现在记就重开终端再聊一次。]")
-        print(f"\n—— 会话收尾：{len(items)} 条事实等你确认（确认后才会进长期记忆）——")
-        for i, item in enumerate(items, 1):
-            print(f"  {i}) {item['body']}")
-        if more:
-            print(f"  （还有 {more} 条没列出来，下次再问）")
-        try:
-            answer = input("回 ok 全记 / 回序号（如 1,3，没选的留到下次）/ 回 no 全部不要 > ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print("\n（没回答，全部留到下次）")
-            return ""
+        else:
+            print(f"\n—— 会话收尾：{len(items)} 条事实等你确认（确认后才会进长期记忆）——")
+            for i, item in enumerate(items, 1):
+                print(f"  {i}) {item['body']}")
+            if more:
+                print(f"  （还有 {more} 条没列出来，下次再问）")
+            try:
+                answer = input(
+                    "回 ok 全记 / 回序号（如 1,3，没选的留到下次）/ 回 no 全部不要 > "
+                ).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\n（没回答，全部留到下次）")
+                return ""
         if answer in {"no", "n"}:
             return self._reject(items)
         chosen = (set(range(1, len(items) + 1)) if answer in {"ok", "y", "yes"}

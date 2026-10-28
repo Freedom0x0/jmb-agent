@@ -6,8 +6,10 @@ pet.json + spritesheet 的 8x9/8x11 网格。Windows 用 -transparentcolor
 """
 from __future__ import annotations
 
+import json
 import math
 import tkinter as tk
+from pathlib import Path
 
 STATE_COLORS = {
     "idle": "#5eead4",
@@ -19,6 +21,17 @@ STATE_COLORS = {
     "waving": "#86efac",
 }
 TRANSPARENT = "#010203"
+ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "pets" / "jmb"
+STATE_ROWS = {
+    "idle": 0,
+    "thinking": 1,
+    "searching": 2,
+    "working": 3,
+    "waving": 4,
+    "failed": 5,
+    "waiting": 0,
+}
+FRAME_W, FRAME_H = 192, 208
 
 
 def _shade(hex_color: str, factor: float) -> str:
@@ -88,12 +101,29 @@ class PetWindow:
         self._drag: tuple[int, int] | None = None
         self._after: str | None = None
         self._closed = False
+        self._sprite_frames = self._load_sprites()
         self.bubble_window = BubbleWindow(master)
         self._place()
         self.canvas.bind("<ButtonPress-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._move)
         self.canvas.bind("<ButtonRelease-1>", self._release)
         self._animate()
+
+    def _load_sprites(self) -> dict[str, list]:
+        try:
+            from PIL import Image, ImageTk
+
+            meta = json.loads((ASSET_DIR / "pet.json").read_text(encoding="utf-8"))
+            sheet = Image.open(ASSET_DIR / meta["spritesheetPath"]).convert("RGBA")
+            frames: dict[str, list] = {}
+            for state, row in STATE_ROWS.items():
+                frames[state] = []
+                for col in range(8):
+                    box = (col * FRAME_W, row * FRAME_H, (col + 1) * FRAME_W, (row + 1) * FRAME_H)
+                    frames[state].append(ImageTk.PhotoImage(sheet.crop(box)))
+            return frames
+        except Exception:  # noqa: BLE001 —— 没有 Pillow/素材时回退 Canvas
+            return {}
 
     def _place(self) -> None:
         sw = self.win.winfo_screenwidth()
@@ -103,6 +133,11 @@ class PetWindow:
     def _draw(self) -> None:
         canvas = self.canvas
         canvas.delete("all")
+        frames = self._sprite_frames.get(self.state) or self._sprite_frames.get("idle")
+        if frames:
+            canvas.create_image(self.width // 2, self.height // 2,
+                                image=frames[(self.tick // 3) % len(frames)])
+            return
         color = STATE_COLORS.get(self.state, STATE_COLORS["idle"])
         bob = int(math.sin(self.tick / 7.0) * 3) if self.state != "failed" else 0
         dark = _shade(color, 0.65)

@@ -724,7 +724,7 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 - **代价写明**：桌宠生命周期跟 jmb 走——jmb 不跑，桌宠不出现。要"关掉 jmb 还留着"就是另一个形状（A 或托盘后台），不选。
 
 【依赖】D32（jmb 独立 app）、D4'（入口形态）、D24（每日清单主动冒泡）。
-【状态】✅ 方向已定；v1 Tkinter app 壳 + Canvas 桌宠已落地（D35）；PySide6/spritesheet 后做。
+【状态】✅ 方向已定；v1 Tkinter app 壳 + jmb 自有 sprite 桌宠已落地（D35）；PySide6/托盘/严格穿透后做。
 
 ---
 
@@ -762,14 +762,15 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 【决定】
 - `jmb app` 打开 Tkinter 聊天窗口 + 透明置顶 `PetWindow`；终端 `jmb chat` 保留；两者共用 `ChatSession`（模型/工具/记忆/代码改动一份）。
 - 框架先 **Tkinter**（stdlib、零安装）。PySide6 在这台机器上安装卡住（下载/解包十几分钟未进 venv；磁盘 8.6GB、可用内存 0.53GB），按 D33 备选回退；PySide6 后换。
-- 渲染 v1：Canvas 占位形象 + idle/thinking/searching/working/failed/waving + 气泡 + 拖拽；暂未接 `pet.json`/spritesheet、托盘、严格点击穿透。
+- 渲染 v1：**jmb 自有 `pet.json` + 8×9 网格 spritesheet（192×208 帧）**，Pillow 加载、Canvas 兜底；idle/thinking/searching/working/failed/waving + 气泡 + 拖拽；暂未做托盘、严格点击穿透。
 - 授权：GUI 读/写/执行走 worker→主窗口 `messagebox` 回调（`grants.set_prompt_handler`），不再依赖 stdin。
-- 记忆收尾确认未接 GUI；候选事实留到下次终端 `jmb chat` 确认（TODO）。
+- 撤销：GUI 有「撤销」按钮，走同一 `ChatSession.undo`（代码整轮 / 自我改写）。
+- 记忆收尾：GUI 关闭时弹「全部记 / 全部不要」确认；不做逐条勾选。
 - 分支 `feat/app-shell-renderer` 合并了 `feat/code-search-sandbox`（#6），所以 app 里直接有 grep/find 和 Docker 沙箱。
 
-【验证】44 项测试通过：app smoke、ChatWorker ready/stop、GUI permission handler、grep/find、沙箱/SSRF、code tools。
+【验证】45 项测试通过：app smoke、sprite 加载、ChatWorker ready/stop、GUI permission handler、记忆 ask 回调、grep/find、沙箱/SSRF、code tools。
 
-【已知短板】Tkinter 视觉/点击穿透弱；无 undo 按钮（终端 undo 仍在）；无托盘；PySide6 未装；真实 sprite 未接。
+【已知短板】Tkinter 视觉/点击穿透弱；无托盘；PySide6 未装；记忆确认只有全记/全丢，不能逐条选；sprite 是 jmb 自有的占位形象（不是 Petdex 画廊素材）。
 
 【状态】✅ v1 已落地，待验收；PySide6/真实 sprite 后续。
 

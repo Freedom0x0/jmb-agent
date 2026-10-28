@@ -8,6 +8,7 @@ dependencies = [
     "trafilatura>=2.3",
     "openai>=3.39",
     "context-forge",
+    "pillow>=10",
 ]
 
 [project.scripts]
