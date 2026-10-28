@@ -5,6 +5,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
+import uuid
 from tkinter import messagebox
 
 from .pet import PetWindow
@@ -20,40 +21,65 @@ class ChatWorker(threading.Thread):
         super().__init__(daemon=True)
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.inbox: queue.Queue[str | None] = queue.Queue()
+        self.pending_permissions: dict[str, dict] = {}
         self.session = None
 
     def run(self) -> None:
+        from .. import grants
+
+        grants.set_prompt_handler(self._ask_permission)
         try:
-            from ..chat import ChatSession
-            self.session = ChatSession(self._emit)
-        except Exception as exc:  # noqa: BLE001
-            self.events.put(("fatal", f"{type(exc).__name__}: {exc}"))
-            return
-        self.events.put(("ready", {
-            "tid": self.session.tid,
-            "profile": self.session.profile.name,
-            "transcript": str(self.session.transcript_path),
-        }))
-        while True:
-            text = self.inbox.get()
-            if text is None:
-                break
-            self.session.send(text)
-        try:
-            pending = self.session.confirm_pending(interactive=False)
-            if pending:
-                self.events.put(("warning", pending))
-        except Exception:  # noqa: BLE001
-            pass
-        self.session.close()
+            try:
+                from ..chat import ChatSession
+                self.session = ChatSession(self._emit)
+            except Exception as exc:  # noqa: BLE001
+                self.events.put(("fatal", f"{type(exc).__name__}: {exc}"))
+                return
+            self.events.put(("ready", {
+                "tid": self.session.tid,
+                "profile": self.session.profile.name,
+                "transcript": str(self.session.transcript_path),
+            }))
+            while True:
+                text = self.inbox.get()
+                if text is None:
+                    break
+                self.session.send(text)
+            try:
+                pending = self.session.confirm_pending(interactive=False)
+                if pending:
+                    self.events.put(("warning", pending))
+            except Exception:  # noqa: BLE001
+                pass
+            self.session.close()
+        finally:
+            grants.set_prompt_handler(None)
 
     def _emit(self, kind: str, data) -> None:
         self.events.put((kind, data))
+
+    def _ask_permission(self, prompt: str) -> str:
+        key = uuid.uuid4().hex
+        event = threading.Event()
+        self.pending_permissions[key] = {"event": event, "answer": False}
+        self.events.put(("permission", {"id": key, "text": prompt}))
+        event.wait(timeout=300)
+        item = self.pending_permissions.pop(key, None)
+        return "y" if item and item["answer"] else "n"
+
+    def answer_permission(self, key: str, ok: bool) -> None:
+        item = self.pending_permissions.get(key)
+        if item is not None:
+            item["answer"] = bool(ok)
+            item["event"].set()
 
     def send(self, text: str) -> None:
         self.inbox.put(text)
 
     def stop(self) -> None:
+        for item in list(self.pending_permissions.values()):
+            item["answer"] = False
+            item["event"].set()
         self.inbox.put(None)
         self.join(timeout=5)
 
@@ -211,6 +237,10 @@ class MainWindow(tk.Tk):
         elif kind == "error":
             self._append(f"[这一轮出错：{data}]\n", "error")
             self.pet.set_state("failed")
+        elif kind == "permission":
+            ok = messagebox.askyesno("jmb 需要授权", str(data.get("text", "")))
+            if self.worker is not None:
+                self.worker.answer_permission(str(data.get("id", "")), ok)
         elif kind == "turn_end":
             self.busy = False
             self.entry.config(state="normal")
