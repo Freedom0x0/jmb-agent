@@ -732,24 +732,25 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 【用户原话】"任意路径   不分版本一次做完  本会话 按轮次"（回答四问）
 
 【决定】
-- **工具**：`read_code` 扩 `offset/limit`；新增 `write_file` / `edit_file` / `run_command`。
+- **工具**：`read_code` 扩 `offset/limit`；新增 `grep` / `find`（只读，走 read 授权，不占 exec）与 `write_file` / `edit_file` / `run_command`。
 - **写范围**：**任意路径**；保留硬拒：`platform-group-projects`（D11）、jmb 自身 `spaces/`、`.git` 目录。
 - **授权**：读沿用 D11 白名单；写/执行首次触发**本会话**授权，之后本会话放行；**不做 persistent write/exec**。
+- **执行沙箱**：`run_command` 默认 Docker（`JMB_SANDBOX_IMAGE` 默认 `python:3.13-slim`；`--network none`、只读根、cap-drop、2g/2c）；只有 `JMB_SANDBOX=host` 才显式关闭。`fetch_page` 拒绝 localhost/内网/回环/保留地址，重定向也检查。
 - **撤销**：每个用户轮次一个 change set（`changes/code/<turn_id>/manifest.json` + preimage）；`undo` 回滚整轮；文件之后被改过则拒绝回滚；**命令副作用不能 undo**。
 - **编辑语义**：参考 Pi coding agent（MIT）的 `edit` 契约——精确优先、唯一、不重叠、模糊归一、保留 BOM/CRLF、返回 diff；**不引 Pi runtime**。
 - **输出**：命令输出截断 20KB/800 行，完整输出落盘；diff 截断 5000 字符。
 - **定位**：coding 能力，不改人格/记忆主线；不做第二个 Claude Code。
 
-【验证】`tests/test_code_tools.py` **20 项通过**：CRLF/BOM、重复/重叠/无变化、模糊、按轮次 undo、外部改动拒回滚、公司仓/spaces/.git 拒写、会话授权、read offset/limit、命令/截断/超时、chat 工具路由。
+【验证】`tests/test_code_tools.py` + `tests/test_search_tools.py` + `tests/test_sandbox.py` + `tests/test_webfetch.py` **39 项通过**：CRLF/BOM、重复/重叠/无变化、模糊、按轮次 undo、外部改动拒回滚、公司仓/spaces/.git 拒写、会话授权、read offset/limit、grep/find 只读、命令/截断/超时、Docker argv/缺 docker、SSRF/重定向、chat 工具路由。
 
 【已知短板】
-- 任意路径 + 本会话 exec 权限很大；**命令不是沙箱**，能访问同 OS 用户能访问的一切。
-- 公司仓/spaces 只做路径/字符串硬拒，不是安全边界。
-- 命令副作用不可 undo；只能靠 diff/preimage 回滚文件。
-- OpenAI 线工具结果顺序仍是已知问题（本轮未修）。
-- 没有 dedicated `grep/find`；用 `run_command` 代替。项目上下文/compaction 未做。
+- **Docker daemon 本机未运行**，容器路径未 runtime 测试；默认镜像不含项目依赖，跑测试要设 `JMB_SANDBOX_IMAGE`。
+- `fetch_page` 防 SSRF 但 DNS rebinding 未彻底解决（校验后 urllib 会再解析一次）。
+- `run_command` 的 `JMB_SANDBOX=host` 模式仍是 OS 用户权限；默认 docker 才是沙箱。
+- 任意路径 + 本会话 exec 权限很大；命令副作用不能 undo。
+- 项目上下文/compaction 未做；OpenAI 线工具结果顺序仍是已知问题（本轮未修）。
 
-【状态】✅ 已落地；测试见 `tests/test_code_tools.py`。
+【状态】✅ 已落地；测试见 `tests/test_code_tools.py`、`tests/test_search_tools.py`、`tests/test_sandbox.py`、`tests/test_webfetch.py`。Docker 容器路径待启动 Docker 后验收。
 
 ---
 

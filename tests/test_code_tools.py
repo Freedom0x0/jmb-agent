@@ -17,7 +17,9 @@ class CodeToolsTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self._old_home = os.environ.get("JMB_HOME")
+        self._old_sandbox = os.environ.get("JMB_SANDBOX")
         os.environ["JMB_HOME"] = str(self.root / "home")
+        os.environ["JMB_SANDBOX"] = "host"
         grants.reset_session()
         self.session = code.CodeSession()
 
@@ -28,6 +30,10 @@ class CodeToolsTest(unittest.TestCase):
             os.environ.pop("JMB_HOME", None)
         else:
             os.environ["JMB_HOME"] = self._old_home
+        if self._old_sandbox is None:
+            os.environ.pop("JMB_SANDBOX", None)
+        else:
+            os.environ["JMB_SANDBOX"] = self._old_sandbox
         self.tmp.cleanup()
 
     def test_edit_preserves_bom_and_crlf(self) -> None:
@@ -209,6 +215,17 @@ class CodeToolsTest(unittest.TestCase):
                 None, self.session)
         self.session.end_turn()
         self.assertIn("wired", message)
+
+        (self.root / "needle.py").write_text("needle = 1\n", encoding="utf-8")
+        grants.grant(str(self.root))
+        grep_result = chat._dispatch(
+            "grep", {"pattern": "needle", "path": str(self.root), "glob": "*.py"},
+            None, self.session)
+        self.assertIn("needle.py", grep_result)
+        find_result = chat._dispatch(
+            "find", {"path": str(self.root), "name_pattern": "needle.py"},
+            None, self.session)
+        self.assertIn("needle.py", find_result)
 
 
 if __name__ == "__main__":

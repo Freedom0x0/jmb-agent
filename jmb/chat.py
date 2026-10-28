@@ -3,8 +3,8 @@
 - 流式出字；thinking 只提示不展示，历史里保留回传（按 profile 开关决定）。
 - Anthropic 线：服务端 web_search 声明即用（端点忽略 max_uses，实测 ⇒ 轮数靠客户端闸门）。
 - OpenAI 线：无服务端搜索 ⇒ 声明 search_web（Bing 兜底）。
-- 客户端工具：fetch_page / remember_fact / read_code / write_file / edit_file / run_command /
-  today_brief / update_self_file / (search_web)。
+- 客户端工具：fetch_page / remember_fact / read_code / grep / find / write_file / edit_file /
+  run_command / today_brief / update_self_file / (search_web)。
   模型只出操作决策，落盘全走 gate / memory / grants / code / brief 的确定性代码。
 - 预算闸门：每轮发送前 count_tokens（anthropic 线实测可用），超了折叠老轮次的 thinking 与搜索结果。
 """
@@ -16,7 +16,7 @@ import os
 import sys
 import uuid
 
-from . import brief, code, config, gate, grants, prefix, providers, seeds, webfetch
+from . import brief, code, config, gate, grants, prefix, providers, search, seeds, webfetch
 
 INPUT_BUDGET = 30000  # spec §5.6 客户端闸门；跑一周后按 usage 重定
 
@@ -69,6 +69,32 @@ READ_CODE = {
                      "required": ["path"]},
 }
 
+GREP = {
+    "name": "grep",
+    "description": ("在文件/目录里按正则搜代码。只读，不需要执行授权；会跳过 "
+                    ".git/node_modules/.venv/二进制；输出有上限。"),
+    "input_schema": {"type": "object",
+                     "properties": {
+                         "pattern": {"type": "string", "description": "正则表达式"},
+                         "path": {"type": "string", "description": "文件或目录"},
+                         "glob": {"type": "string", "description": "只搜匹配的文件名，如 *.py"},
+                         "case_sensitive": {"type": "boolean", "description": "默认 true"},
+                         "max_results": {"type": "integer", "description": "默认 200，上限 500"}},
+                     "required": ["pattern", "path"]},
+}
+
+FIND = {
+    "name": "find",
+    "description": ("按文件名 glob 找文件。只读，不需要执行授权；会跳过 "
+                    ".git/node_modules/.venv 等；输出有上限。"),
+    "input_schema": {"type": "object",
+                     "properties": {
+                         "path": {"type": "string", "description": "目录"},
+                         "name_pattern": {"type": "string", "description": "文件名 glob，默认 *"},
+                         "max_results": {"type": "integer", "description": "默认 200，上限 500"}},
+                     "required": ["path"]},
+}
+
 WRITE_FILE = {
     "name": "write_file",
     "description": ("创建或整文件覆盖一个代码文件。只用于新文件或完整重写；"
@@ -99,8 +125,9 @@ EDIT_FILE = {
 
 RUN_COMMAND = {
     "name": "run_command",
-    "description": ("在指定目录执行 shell 命令（测试/构建/查看）。首次执行会请求本会话授权；"
-                    "输出会截断，完整输出落盘；非零退出如实返回；命令副作用不能 undo。"),
+    "description": ("在指定目录执行 shell 命令（测试/构建/查看）。默认在 Docker 沙箱里执行"
+                    "（JMB_SANDBOX_IMAGE）；只有 JMB_SANDBOX=host 才显式关闭。首次执行会请求"
+                    "本会话授权；输出会截断，完整输出落盘；非零退出如实返回；命令副作用不能 undo。"),
     "input_schema": {"type": "object",
                      "properties": {
                          "command": {"type": "string", "description": "要执行的命令"},
@@ -126,7 +153,7 @@ BING_SEARCH = {
 
 def _tools(profile) -> list:
     client_tools = [prefix.UPDATE_SELF_FILE, FETCH_PAGE, REMEMBER_FACT, READ_CODE,
-                    WRITE_FILE, EDIT_FILE, RUN_COMMAND, TODAY_BRIEF]
+                    GREP, FIND, WRITE_FILE, EDIT_FILE, RUN_COMMAND, TODAY_BRIEF]
     if profile.supports_server_web_search:
         return [prefix.WEB_SEARCH, *client_tools]
     return [*client_tools, BING_SEARCH]
@@ -191,6 +218,27 @@ def _dispatch(name: str, payload: dict, fact_memory, code_session) -> str:
             return why
         return grants.perform(path, action, offset=payload.get("offset", 1),
                               limit=payload.get("limit"))
+    if name == "grep":
+        pattern, path = str(payload.get("pattern", "")), str(payload.get("path", ""))
+        ok, why = grants.authorize(path, "grep", interactive=sys.stdin.isatty())
+        if not ok:
+            return why
+        try:
+            return search.grep(pattern, path, payload.get("glob"),
+                               bool(payload.get("case_sensitive", True)),
+                               payload.get("max_results", 200))
+        except (search.SearchError, OSError) as exc:
+            return f"拒绝：{type(exc).__name__}: {exc}"
+    if name == "find":
+        path = str(payload.get("path", ""))
+        ok, why = grants.authorize(path, "find", interactive=sys.stdin.isatty())
+        if not ok:
+            return why
+        try:
+            return search.find(path, str(payload.get("name_pattern") or "*"),
+                               payload.get("max_results", 200))
+        except (search.SearchError, OSError) as exc:
+            return f"拒绝：{type(exc).__name__}: {exc}"
     if name == "write_file":
         path = str(payload.get("path", ""))
         ok, why = grants.authorize_write(path, interactive=sys.stdin.isatty())
@@ -340,6 +388,10 @@ def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log
             name, payload = block.get("name", ""), dict(block.get("input") or {})
             if name == "fetch_page":
                 emit("activity", f"（抓正文：{str(payload.get('url', ''))[:80]}…）")
+            elif name == "grep":
+                emit("activity", f"（搜代码：{str(payload.get('pattern', ''))[:60]}）")
+            elif name == "find":
+                emit("activity", f"（找文件：{str(payload.get('name_pattern') or '*')[:60]}）")
             elif name == "remember_fact" and fact_memory and str(payload.get("fact", "")).strip():
                 emit("activity", "（想记一条事实，收尾时让你确认）")
             receipt = _dispatch(name, payload, fact_memory, code_session)

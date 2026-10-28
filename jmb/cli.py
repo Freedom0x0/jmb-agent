@@ -62,6 +62,13 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
         print("CF 包      [MISS] context-forge 未安装（uv sync）")
         problems += 1
 
+    from . import code as code_tools
+    sandbox = code_tools.sandbox_summary(check_daemon=True)
+    print(f"沙箱      {sandbox}")
+    if (sandbox.startswith("host") or "找不到 docker" in sandbox
+            or "daemon=未运行" in sandbox):
+        problems += 1
+
     brief = config.brief_state_path(_dt.date.today())
     if brief.is_file():
         print(f"今日日报  已跑（{brief.name}）")
