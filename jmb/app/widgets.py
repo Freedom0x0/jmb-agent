@@ -405,6 +405,13 @@ class ChatView(tk.Frame):
         self._typing_row = None
         self._avatar = theme.load_avatar(30, bg=theme.BG, master=self)
         self._empty = self._build_empty()
+        self._new_away = False
+        self.jump = RoundedButton(self, "↓ 新消息", command=self._jump_to_bottom,
+                                  width=96, height=32, fill=theme.PANEL_2,
+                                  fg=theme.MINT, hover=theme.BORDER,
+                                  font=theme.FONT_TINY, radius=12)
+        self.jump.place(relx=1.0, rely=1.0, anchor="se", x=-18, y=-14)
+        self.jump.place_forget()
 
     def _on_resize(self, event) -> None:
         if event.width > 20:
@@ -413,12 +420,27 @@ class ChatView(tk.Frame):
     def _on_wheel(self, event) -> None:
         self.canvas.yview_scroll(-int(event.delta / 120), "units")
         self._stream_stick = self._at_bottom()
+        if self._stream_stick:
+            self._hide_jump()
 
     def _at_bottom(self) -> bool:
         try:
             return self.canvas.yview()[1] >= 0.97
         except tk.TclError:
             return True
+
+    def _show_jump(self) -> None:
+        self._new_away = True
+        self.jump.place(relx=1.0, rely=1.0, anchor="se", x=-18, y=-14)
+
+    def _hide_jump(self) -> None:
+        self._new_away = False
+        self.jump.place_forget()
+
+    def _jump_to_bottom(self) -> None:
+        self._stream_stick = True
+        self._hide_jump()
+        self._scroll_to_end()
 
     def _bubble_width(self) -> int:
         width = self.canvas.winfo_width()
@@ -523,6 +545,9 @@ class ChatView(tk.Frame):
         self._messages.append({"role": role, "text": text, "row": row})
         if stick:
             self._scroll_to_end()
+            self._hide_jump()
+        else:
+            self._show_jump()
 
     def begin_stream(self) -> None:
         self.show_typing(False)
@@ -557,6 +582,9 @@ class ChatView(tk.Frame):
                 self._messages[-1]["text"] = self._stream_text
             if self._stream_stick:
                 self._scroll_to_end()
+                self._hide_jump()
+            else:
+                self._show_jump()
 
     def end_stream(self) -> None:
         if self._stream_after is not None:
@@ -626,6 +654,7 @@ class ChatView(tk.Frame):
         self._stream_stick = True
         self._stream_text = ""
         self._stream_row = self._stream_bubble = None
+        self._hide_jump()
         if self._empty is None:
             self._empty = self._build_empty()
 
