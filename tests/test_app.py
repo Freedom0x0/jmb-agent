@@ -75,9 +75,11 @@ class AppSmokeTest(unittest.TestCase):
                     md.write_text("# jmb 每日清单", encoding="utf-8")
                     window._check_brief()
                     self.assertIn("清单", window.pet.bubble_window.label.cget("text"))
+                    self.assertIn("今天的清单好了", window.text.get("1.0", "end"))
                     window.pet.bubble_window.label.config(text="sentinel")
                     window._check_brief()
                     self.assertEqual(window.pet.bubble_window.label.cget("text"), "sentinel")
+                    self.assertEqual(window.text.get("1.0", "end").count("今天的清单好了"), 1)
                     self.assertTrue((config.jmb_home() / "state" / "brief-seen.json").exists())
                 finally:
                     window.close()
@@ -86,6 +88,19 @@ class AppSmokeTest(unittest.TestCase):
                     os.environ.pop("JMB_HOME", None)
                 else:
                     os.environ["JMB_HOME"] = old
+
+    def test_brief_notify_invokes_powershell(self) -> None:
+        import sys
+        from unittest import mock
+
+        if sys.platform != "win32":
+            self.skipTest("windows-only toast")
+        from jmb import brief
+
+        with mock.patch("jmb.brief.subprocess.run") as run:
+            brief._notify_done(8)
+        run.assert_called_once()
+        self.assertIn("8", run.call_args.args[0][-1])
 
     def test_chat_worker_ready_and_stop(self) -> None:
         import os

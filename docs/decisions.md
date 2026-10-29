@@ -40,7 +40,7 @@
 | D33 | 桌宠渲染层内置 jmb，不用 Petdex 外接/sidecar | ✅ 方向已定，实现后做 |
 | D34 | 写代码：任意路径 / 本会话授权 / 按轮次 undo | ✅（2026-10-28 他定的） |
 | D35 | app 壳 v1 = Tkinter 聊天窗口 + 内置桌宠；PySide6 后换 | ✅ v1 已落地，待验收 |
-| D36 | 每日清单投递面（app 菜单 + 一次性气泡）+ 定时任务壳修复 | ✅ 已落地，待验收 |
+| D36 | 每日清单投递面（Windows toast + app 内消息）+ 定时任务壳修复 | ✅ 已落地，待验收 |
 
 > ⚠️ **日期标签更正**：本文件与 `docs/research/*.md` 里所有写着"2026-10-13"的条目，**实际都产出于 2026-10-26**（10-13 是我一开始误抄的日期，一路沿用到 D24）。内容和数字本身不受影响，但别拿"10-13"当时间线索引。新条目一律标 10-26。
 
@@ -784,12 +784,13 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 【决定】
 - 任务壳改为**纯 ASCII + CRLF**；stdout/stderr 追加到 `%LOCALAPPDATA%\jmb\logs\brief-task.log`，start/exit 码显式落日志；计划任务动作改为 `cmd.exe /c "…\brief-task.cmd"`。
 - 任务设置只改两条：`DisallowStartIfOnBatteries=false`、`StopIfGoingOnBatteries=false`（用电池也跑）。**不动 D30 的"不补跑"**：`StartWhenAvailable` 保持 false，不挂 ONLOGON/ONSTART。
-- 投递面：app 壳每 60 秒检查今天的 `brief-YYYY-MM-DD.json`，有新的就冒一次桌宠气泡并写 `brief-seen.json`（同一天不重复）；菜单「文件 → 今日清单」用默认程序打开 md，没有文件时气泡说明。
-- app 没开就没有实时推送；下次打开 app 会对当天已生成的清单补一次气泡（只是提醒，不重跑数据）。
+- 投递面（两道）：①清单**新生成**时 `brief.py` 发一条 Windows 通知（PowerShell WinRT toast，AUMID=`jmb`，本机实测可用；app 关着也能收到）；②app 壳每 60 秒检查今天的 `brief-YYYY-MM-DD.json`，未提醒过就在**聊天窗口里留一条 `jmb>` 消息** + 冒一次桌宠气泡，并写 `brief-seen.json`（同一天不重复）；菜单「文件 → 今日清单」用默认程序打开 md。
+- app 没开：只有 toast；下次打开 app 会对当天未提醒过的清单补一条聊天消息（只是提醒，不重跑数据）。
+- 通知只在**新生成**时发；幂等命中（"今天已跑过"）不重复打扰。
 
-【代价】10:00 的实时推送依赖 app 常驻；真正常驻推送等托盘/开机自启（二期）。
+【代价】toast 受 Windows 通知设置/专注助手影响，可能被折叠；app 内消息需要 app 开着（杀进程/重启后是新的 Tk 窗口，旧滚动内容不保留，但 transcript 在磁盘上）。
 
-【验证】计划任务 `schtasks /run` 后 `LastTaskResult=0`，日志出现 `[brief-task] start/exit 0`；47 项测试通过（新增「清单气泡只冒一次」）。
+【验证】计划任务 `schtasks /run` 后 `LastTaskResult=0`，日志出现 `[brief-task] start/exit 0`；toast 经 PowerShell 实测成功、helper 单测覆盖；48 项测试通过（新增「清单只提醒一次」「toast 调用」）。
 
 【状态】✅ 已落地，待验收。
 

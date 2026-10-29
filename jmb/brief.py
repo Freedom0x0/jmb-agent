@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import re
+import subprocess
 import sys
 import urllib.parse
 import urllib.request
@@ -235,6 +236,29 @@ def build() -> tuple[str, int]:
     return "\n".join(md), len(merged)
 
 
+def _notify_done(count: int) -> None:
+    """Windows 通知：app 没开也能收到（app 开着时另有聊天窗口消息）。"""
+    if sys.platform != "win32":
+        return
+    body = f"今天的清单好了（{count} 条新项目）。打开 jmb 看全文。"
+    script = (
+        "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
+        "ContentType=WindowsRuntime] | Out-Null;"
+        "$t=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent("
+        "[Windows.UI.Notifications.ToastTemplateType]::ToastText02);"
+        "$x=$t.GetElementsByTagName('text');"
+        "$x.Item(0).AppendChild($t.CreateTextNode('jmb')) | Out-Null;"
+        f"$x.Item(1).AppendChild($t.CreateTextNode('{body}')) | Out-Null;"
+        "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('jmb')"
+        ".Show([Windows.UI.Notifications.ToastNotification]::new($t))"
+    )
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                       timeout=15, capture_output=True)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def run() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -254,6 +278,7 @@ def run() -> int:
                                      ensure_ascii=False), encoding="utf-8")
     print(text)
     print(f"\n已写入 {md_path}")
+    _notify_done(count)
     return 0
 
 

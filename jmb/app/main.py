@@ -268,7 +268,15 @@ class MainWindow(tk.Tk):
         mtime = state.stat().st_mtime
         if seen.get("file") == state.name and seen.get("mtime") == mtime:
             return
-        self.pet.bubble("今天的清单好了：菜单 文件 → 今日清单。", 7000)
+        count = ""
+        try:
+            count = str(json.loads(state.read_text(encoding="utf-8")).get("items", ""))
+        except (OSError, ValueError):
+            pass
+        head = f"{count} 条新项目" if count else "清单已生成"
+        self._append(f"jmb> 今天的清单好了（{head}）。点「文件 → 今日清单」看全文。\n",
+                     "assistant")
+        self.pet.bubble("今天的清单好了", 7000)
         try:
             seen_path.parent.mkdir(parents=True, exist_ok=True)
             seen_path.write_text(json.dumps({"file": state.name, "mtime": mtime}),
