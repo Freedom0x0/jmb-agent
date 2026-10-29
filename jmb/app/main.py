@@ -12,12 +12,14 @@ from datetime import date
 from tkinter import messagebox
 
 from .. import config
+from . import theme
 from .pet import PetWindow
+from .widgets import ChatView, InputBar, RoundedButton
 
-BG = "#1e1f22"
-PANEL = "#26282c"
-TEXT = "#e6e6e6"
-MUTED = "#9aa0a6"
+BG = theme.BG
+PANEL = theme.PANEL
+TEXT = theme.TEXT
+MUTED = theme.MUTED
 
 
 class ChatWorker(threading.Thread):
@@ -125,9 +127,9 @@ class ChatWorker(threading.Thread):
 class MainWindow(tk.Tk):
     def __init__(self, start_worker: bool = True) -> None:
         super().__init__()
-        self.title("jmb")
-        self.geometry("860x640+140+80")
-        self.minsize(640, 480)
+        self.title("江慕白 · jmb")
+        self.geometry("900x680+140+80")
+        self.minsize(720, 560)
         self.configure(bg=BG)
         self.busy = False
         self._closing = False
@@ -136,116 +138,153 @@ class MainWindow(tk.Tk):
         self.worker: ChatWorker | None = None
         self.pet = PetWindow(self)
         self.pet.on_click = self._show_chat
+        self.pet.on_brief = self.show_brief
+        self.pet.on_quit = self.close
         self._build_ui()
-        menubar = tk.Menu(self)
-        file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="今日清单", command=self.show_brief)
-        menubar.add_cascade(label="文件", menu=file_menu)
-        edit_menu = tk.Menu(menubar, tearoff=0)
-        edit_menu.add_command(label="撤销", command=self.undo)
-        menubar.add_cascade(label="编辑", menu=edit_menu)
-        self.config(menu=menubar)
+        self._icon = theme.load_avatar(64, bg=BG, ring=theme.MINT_DIM, master=self)
+        try:
+            self.iconphoto(True, self._icon)
+        except tk.TclError:
+            pass
+        self.update_idletasks()
+        theme.enable_dark_titlebar(self)
         if start_worker:
             self._start_worker()
         else:
-            self.header.config(text="jmb · UI 预览")
+            self.subtitle.config(text="jmb · UI 预览")
             self.status.config(text="未启动 worker")
-            self.entry.config(state="normal")
-            self.button.config(state="normal")
-            self.undo_button.config(state="normal")
+            self.input.set_state("normal")
+            self.button.set_state("normal")
+            self.undo_button.set_state("normal")
         self.protocol("WM_DELETE_WINDOW", self.close)
         self._poll_id = self.after(50, self._poll)
         self._brief_id: str | None = self.after(1500, self._check_brief_loop)
 
     def _build_ui(self) -> None:
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
 
-        self.header = tk.Label(
-            self, text="jmb · 启动中…", bg=BG, fg=TEXT, anchor="w",
-            font=("Microsoft YaHei UI", 12, "bold"))
-        self.header.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 6))
+        header = tk.Frame(self, bg=BG)
+        header.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 10))
+        header.grid_columnconfigure(1, weight=1)
+        self._avatar = theme.load_avatar(40, bg=BG, ring=theme.MINT_DIM, master=header)
+        avatar = tk.Label(header, image=self._avatar, bg=BG, bd=0)
+        avatar.grid(row=0, column=0, rowspan=2, padx=(0, 11))
+        self.header = tk.Label(header, text="江慕白", bg=BG, fg=TEXT, anchor="w",
+                               font=("Microsoft YaHei UI", 13, "bold"))
+        self.header.grid(row=0, column=1, sticky="w")
+        self.subtitle = tk.Label(header, text="jmb · 正在启动…", bg=BG, fg=MUTED,
+                                 anchor="w", font=theme.FONT_TINY)
+        self.subtitle.grid(row=1, column=1, sticky="w")
+        self.brief_button = RoundedButton(header, "清单", command=self.show_brief,
+                                          width=62, height=32, fill=theme.PANEL_2,
+                                          fg=TEXT, hover=theme.BORDER,
+                                          font=theme.FONT_SMALL, radius=12)
+        self.brief_button.grid(row=0, column=2, rowspan=2, padx=(6, 0))
+        self.more_button = RoundedButton(header, "···", command=self._show_menu,
+                                         width=38, height=32, fill=theme.PANEL_2,
+                                         fg=MUTED, hover=theme.BORDER,
+                                         font=theme.FONT, radius=12)
+        self.more_button.grid(row=0, column=3, rowspan=2, padx=(6, 0))
 
-        body = tk.Frame(self, bg=BG)
-        body.grid(row=1, column=0, sticky="nsew", padx=16)
-        body.grid_rowconfigure(0, weight=1)
-        body.grid_columnconfigure(0, weight=1)
-        self.text = tk.Text(
-            body, bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat",
-            wrap="word", state="disabled", padx=10, pady=10,
-            font=("Microsoft YaHei UI", 10), spacing1=2, spacing3=2)
-        scroll = tk.Scrollbar(body, command=self.text.yview)
-        self.text.configure(yscrollcommand=scroll.set)
-        self.text.grid(row=0, column=0, sticky="nsew")
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.text.tag_configure("user", foreground="#8ab4f8")
-        self.text.tag_configure("assistant", foreground=TEXT)
-        self.text.tag_configure("meta", foreground=MUTED)
-        self.text.tag_configure("warn", foreground="#fdd663")
-        self.text.tag_configure("edit", foreground="#c58af9")
-        self.text.tag_configure("error", foreground="#f28b82")
+        tk.Frame(self, bg=theme.BORDER, height=1).grid(row=1, column=0, sticky="ew")
+
+        self.chat = ChatView(self)
+        self.chat.grid(row=2, column=0, sticky="nsew", padx=8)
+        self.text = self.chat  # 兼容旧代码/测试里的 text.get()
 
         bottom = tk.Frame(self, bg=BG)
-        bottom.grid(row=2, column=0, sticky="ew", padx=16, pady=10)
+        bottom.grid(row=3, column=0, sticky="ew", padx=18, pady=(8, 6))
         bottom.grid_columnconfigure(0, weight=1)
-        self.entry = tk.Entry(
-            bottom, bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat",
-            font=("Microsoft YaHei UI", 10), state="disabled")
-        self.entry.grid(row=0, column=0, sticky="ew", ipady=8)
-        self.entry.bind("<Return>", lambda _event: self.send())
-        self.button = tk.Button(
-            bottom, text="发送", command=self.send, state="disabled",
-            bg="#3b82f6", fg="white", activebackground="#2563eb",
-            activeforeground="white", relief="flat", padx=18, pady=6,
-            font=("Microsoft YaHei UI", 10))
+        self.input = InputBar(bottom, on_return=self.send)
+        self.input.grid(row=0, column=0, sticky="ew")
+        self.entry = self.input.entry
+        self.button = RoundedButton(bottom, "发送", command=self.send, width=74,
+                                    height=46, fill=theme.MINT, fg=BG,
+                                    hover="#8af0de", font=theme.FONT, radius=15)
         self.button.grid(row=0, column=1, padx=(8, 0))
-        self.undo_button = tk.Button(
-            bottom, text="撤销", command=self.undo, state="disabled",
-            bg="#3a3d42", fg=TEXT, activebackground="#4a4d52",
-            activeforeground=TEXT, relief="flat", padx=14, pady=6,
-            font=("Microsoft YaHei UI", 10))
+        self.undo_button = RoundedButton(bottom, "撤销", command=self.undo, width=62,
+                                         height=46, fill=theme.PANEL_2, fg=TEXT,
+                                         hover=theme.BORDER, disabled_fill=theme.PANEL_2,
+                                         disabled_fg=theme.MUTED, font=theme.FONT,
+                                         radius=15)
         self.undo_button.grid(row=0, column=2, padx=(8, 0))
 
-        self.status = tk.Label(
-            self, text="准备中…", bg=BG, fg=MUTED, anchor="w",
-            font=("Microsoft YaHei UI", 9))
-        self.status.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 10))
+        statusbar = tk.Frame(self, bg=BG)
+        statusbar.grid(row=4, column=0, sticky="ew", padx=20, pady=(0, 10))
+        self.status = tk.Label(statusbar, text="准备中…", bg=BG, fg=MUTED, anchor="w",
+                               font=theme.FONT_TINY)
+        self.status.pack(side="left")
+        self.usage_label = tk.Label(statusbar, text="", bg=BG, fg=theme.MUTED,
+                                    anchor="e", font=theme.FONT_TINY)
+        self.usage_label.pack(side="right")
+
+    def _copy_last(self) -> None:
+        text = self.chat.last_text()
+        if not text:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.status.config(text="已复制最后一条")
+
+    def _show_menu(self) -> None:
+        menu = tk.Menu(self, tearoff=0, bg=theme.PANEL, fg=TEXT,
+                       activebackground=theme.MINT_DIM, activeforeground=TEXT,
+                       bd=0, relief="flat")
+        menu.add_command(label="今日清单", command=self.show_brief)
+        menu.add_command(label="复制最后一条回复", command=self._copy_last)
+        menu.add_command(label="撤销上一轮", command=self.undo)
+        menu.add_separator()
+        menu.add_command(label="关于 jmb", command=lambda: messagebox.showinfo(
+            "关于 jmb", "jmb · 江慕白\n本地会话 · Tkinter 壳", parent=self))
+        menu.add_command(label="退出", command=self.close)
+        x = self.more_button.winfo_rootx()
+        y = self.more_button.winfo_rooty() + self.more_button.winfo_height() + 4
+        try:
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
 
     def _start_worker(self) -> None:
         self.worker = ChatWorker()
         self.worker.start()
 
     def _append(self, text: str, tag: str = "assistant") -> None:
-        self.text.configure(state="normal")
-        self.text.insert("end", text, tag)
-        self.text.see("end")
-        self.text.configure(state="disabled")
+        text = (text or "").strip("\n")
+        for prefix in ("你> ", "jmb> "):
+            if text.startswith(prefix):
+                text = text[len(prefix):]
+        role = tag if tag in ("user", "assistant", "meta", "warn", "edit", "error",
+                              "notice") else "assistant"
+        if text.strip():
+            self.chat.append(text, role)
 
     def send(self) -> None:
-        text = self.entry.get().strip()
+        text = self.input.get().strip()
         if not text or self.busy or self.worker is None:
             return
-        self.entry.delete(0, "end")
-        self._append(f"你> {text}\n", "user")
+        self.input.clear()
+        self.chat.append(text, "user")
         self.busy = True
-        self.entry.config(state="disabled")
-        self.button.config(state="disabled")
-        self.undo_button.config(state="disabled")
+        self.input.set_state("disabled")
+        self.button.set_state("disabled")
+        self.undo_button.set_state("disabled")
+        self.chat.show_typing(True)
         self.pet.set_state("thinking")
-        self.status.config(text="它收到了，在想…")
+        self.status.config(text="在想了…")
         self.worker.send(text)
 
     def undo(self) -> None:
         if self.busy or self.worker is None:
             return
-        self.undo_button.config(state="disabled")
+        self.undo_button.set_state("disabled")
         self.worker.undo()
 
     def _show_chat(self) -> None:
         self.deiconify()
         self.lift()
         self.focus_force()
-        self.entry.focus_set()
+        self.input.focus_set()
 
     def _brief_paths(self) -> tuple:
         today = date.today()
@@ -281,8 +320,8 @@ class MainWindow(tk.Tk):
         except (OSError, ValueError):
             pass
         head = f"{count} 条新项目" if count else "清单已生成"
-        self._append(f"jmb> 今天的清单好了（{head}）。点这条气泡或「文件 → 今日清单」看全文。\n",
-                     "assistant")
+        self.chat.append(f"今天的清单好了（{head}）。点这条气泡或顶部「清单」看全文。",
+                         "assistant")
         self.pet.bubble("今天的清单好了，点我看全文", 7000, on_click=self.show_brief)
         try:
             seen_path.parent.mkdir(parents=True, exist_ok=True)
@@ -321,65 +360,74 @@ class MainWindow(tk.Tk):
 
     def _on_event(self, kind: str, data) -> None:
         if kind == "ready":
-            self.header.config(text=f"jmb · 会话 {data['tid']} · 线路 {data['profile']}")
-            self.status.config(text=f"转录：{data['transcript']}")
+            self.header.config(text="江慕白")
+            self.subtitle.config(text=f"jmb · {data.get('profile', '')} · 在线")
+            self.status.config(text="在线 · 本地会话")
+            self.usage_label.config(text="")
+            self.pet.set_state("idle")
             if not self.busy:
-                self.entry.config(state="normal")
-                self.button.config(state="normal")
-                self.undo_button.config(state="normal")
-                self.entry.focus_set()
+                self.input.set_state("normal")
+                self.button.set_state("normal")
+                self.undo_button.set_state("normal")
+                self.input.focus_set()
         elif kind == "text_start":
-            self._append("jmb> ", "assistant")
+            self.chat.show_typing(False)
+            self.chat.begin_stream()
             self.pet.set_state("working")
+            self.status.config(text="在写…")
         elif kind == "text":
-            self._append(str(data), "assistant")
+            self.chat.stream(str(data))
         elif kind == "text_end":
-            self._append("\n", "assistant")
+            self.chat.end_stream()
         elif kind == "thinking":
             self.pet.set_state("thinking")
-            self.status.config(text="它在想…")
+            self.status.config(text="在想…")
         elif kind == "search":
             self.pet.set_state("searching")
             self.status.config(text="联网搜索中…")
         elif kind == "usage":
-            self.status.config(
-                text=f"in={data.get('input', 0)} cache={data.get('cache_read', 0)} "
-                     f"out={data.get('output', 0)}")
+            self.usage_label.config(
+                text=f"in {data.get('input', 0)} · cache {data.get('cache_read', 0)} "
+                     f"· out {data.get('output', 0)}")
         elif kind == "activity":
-            self._append(f"{data}\n", "meta")
+            self.chat.append(str(data), "meta")
             self.pet.set_state("working")
         elif kind == "compacting":
             self.status.config(text="压缩上下文…")
             self.pet.set_state("working")
         elif kind == "compacted":
-            self._append(f"[上下文已压缩：{data.get('before')} → {data.get('after')} 条]\n",
-                         "meta")
-            self.status.config(text="压缩完成")
+            self.chat.append(f"上下文已压缩：{data.get('before')} → {data.get('after')} 条",
+                             "meta")
+            self.status.config(text="在线 · 本地会话")
             self.pet.set_state("idle")
         elif kind == "warning":
-            self._append(f"{data}\n", "warn")
+            self.chat.append(str(data), "warn")
         elif kind == "self_edit":
             note = str(data.get("note", ""))
-            self._append(
-                f"[它改了 {data.get('target', '?')}，undo 可撤]"
-                f"{('：' + note) if note else ''}\n", "edit")
+            self.chat.append(
+                f"我改了自己的记录（{data.get('target', '?')}）"
+                f"{('：' + note) if note else ''}，undo 可撤。", "edit")
             self.pet.set_state("waving")
             self.pet.bubble("我改了自己的记录，undo 可撤。", 3500, on_click=self._show_chat)
         elif kind == "code":
             receipt = str(data.get("receipt", ""))
-            self._append(f"[{data.get('name')}]\n{receipt[:2000]}\n", "meta")
+            self.chat.append(f"{data.get('name')}\n{receipt[:2000]}", "meta")
             self.pet.set_state("working")
         elif kind == "undo":
-            self._append(f"[undo] {data}\n", "edit")
+            self.chat.append(f"已撤销：{data}", "edit")
             self.pet.set_state("waving")
-            self.undo_button.config(state="normal")
+            self.undo_button.set_state("normal")
         elif kind == "error":
-            self._append(f"[这一轮出错：{data}]\n", "error")
+            self.chat.end_stream()
+            self.chat.show_typing(False)
+            self.chat.append(f"这一轮出错：{data}", "error")
             self.pet.set_state("failed")
         elif kind == "permission":
+            self.pet.set_state("waiting")
             ok = messagebox.askyesno("jmb 需要授权", str(data.get("text", "")), parent=self)
             if self.worker is not None:
                 self.worker.answer_permission(str(data.get("id", "")), ok)
+            self.pet.set_state("thinking" if ok else "idle")
         elif kind == "confirm":
             items = data.get("items", [])
             more = data.get("more", 0)
@@ -387,22 +435,27 @@ class MainWindow(tk.Tk):
             if more:
                 text += f"\n（还有 {more} 条下次再问）"
             text += "\n\n全部记进长期记忆吗？选“否”会全部不要。"
+            self.pet.set_state("waiting")
             ok = messagebox.askyesno("jmb 会话收尾", text, parent=self)
             if self.worker is not None:
                 self.worker.answer_confirmation("ok" if ok else "no")
+            self.pet.set_state("idle")
         elif kind == "closed":
             if self.worker is not None:
                 self.worker.join(timeout=1)
             self._finish_close()
         elif kind == "turn_end":
             self.busy = False
-            self.entry.config(state="normal")
-            self.button.config(state="normal")
-            self.undo_button.config(state="normal")
-            self.entry.focus_set()
+            self.chat.show_typing(False)
+            self.chat.end_stream()
+            self.input.set_state("normal")
+            self.button.set_state("normal")
+            self.undo_button.set_state("normal")
+            self.input.focus_set()
             self.pet.set_state("idle")
+            self.status.config(text="在线 · 本地会话")
         elif kind == "fatal":
-            self._append(f"[启动失败：{data}]\n", "error")
+            self.chat.append(f"启动失败：{data}", "error")
             self.pet.set_state("failed")
             messagebox.showerror("jmb 启动失败", str(data))
 
@@ -412,9 +465,9 @@ class MainWindow(tk.Tk):
         self._closing = True
         if self.worker is not None and self.worker.is_alive():
             self.status.config(text="收尾中…")
-            self.entry.config(state="disabled")
-            self.button.config(state="disabled")
-            self.undo_button.config(state="disabled")
+            self.input.set_state("disabled")
+            self.button.set_state("disabled")
+            self.undo_button.set_state("disabled")
             self.pet.set_state("waiting")
             self.worker.request_stop()
             return
@@ -427,6 +480,11 @@ class MainWindow(tk.Tk):
         if self._poll_id is not None:
             try:
                 self.after_cancel(self._poll_id)
+            except tk.TclError:
+                pass
+        if self._brief_id is not None:
+            try:
+                self.after_cancel(self._brief_id)
             except tk.TclError:
                 pass
         self.pet.close()

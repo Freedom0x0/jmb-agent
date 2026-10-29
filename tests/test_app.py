@@ -74,12 +74,12 @@ class AppSmokeTest(unittest.TestCase):
                     md = config.jmb_home() / "state" / f"brief-{today.isoformat()}.md"
                     md.write_text("# jmb 每日清单", encoding="utf-8")
                     window._check_brief()
-                    self.assertIn("清单", window.pet.bubble_window.label.cget("text"))
+                    self.assertIn("清单", window.pet.bubble_window.text)
                     self.assertIsNotNone(window.pet.bubble_window._on_click)
                     self.assertIn("今天的清单好了", window.text.get("1.0", "end"))
-                    window.pet.bubble_window.label.config(text="sentinel")
+                    window.pet.bubble_window.text = "sentinel"
                     window._check_brief()
-                    self.assertEqual(window.pet.bubble_window.label.cget("text"), "sentinel")
+                    self.assertEqual(window.pet.bubble_window.text, "sentinel")
                     self.assertEqual(window.text.get("1.0", "end").count("今天的清单好了"), 1)
                     self.assertTrue((config.jmb_home() / "state" / "brief-seen.json").exists())
                 finally:
@@ -89,6 +89,48 @@ class AppSmokeTest(unittest.TestCase):
                     os.environ.pop("JMB_HOME", None)
                 else:
                     os.environ["JMB_HOME"] = old
+
+    def test_chat_view_stream_and_clear(self) -> None:
+        try:
+            from jmb.app.main import MainWindow
+
+            window = MainWindow(start_worker=False)
+        except tk.TclError:
+            self.skipTest("no display")
+        try:
+            window.withdraw()
+            window.pet.win.withdraw()
+            window.chat.begin_stream()
+            window.chat.stream("第一段")
+            window.chat.stream("，第二段")
+            window.chat.end_stream()
+            self.assertIn("第一段，第二段", window.chat.plain_text())
+            window.chat.clear()
+            self.assertEqual(window.chat.plain_text(), "")
+        finally:
+            window.close()
+
+    def test_input_placeholder_states(self) -> None:
+        try:
+            from jmb.app.main import MainWindow
+
+            window = MainWindow(start_worker=False)
+        except tk.TclError:
+            self.skipTest("no display")
+        try:
+            window.withdraw()
+            window.pet.win.withdraw()
+            self.assertEqual(window.input.get(), "")
+            self.assertIn("说点什么", window.entry.get())
+            window.input.focus_set()
+            self.assertEqual(window.entry.get(), "")
+            window.input.set_state("disabled")
+            self.assertEqual(window.input.get(), "")
+            self.assertIn("正在回复", window.entry.get())
+            window.input.set_state("normal")
+            self.assertIn(window.entry.get(), ("", "和江慕白说点什么…"))
+        finally:
+            window.close()
 
     def test_pet_click_opens_chat_and_bubble_click_fires(self) -> None:
         try:
