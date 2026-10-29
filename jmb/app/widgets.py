@@ -94,6 +94,7 @@ class InputBar(tk.Frame):
         self._placeholder = placeholder
         self._on_return = on_return
         self._showing_placeholder = False
+        self._focused = False
         self.canvas = tk.Canvas(self, height=54, bg=theme.BG, highlightthickness=0, bd=0)
         self.canvas.pack(fill="x", expand=True)
         self.entry = tk.Entry(self.canvas, bg=theme.PANEL, fg=theme.TEXT,
@@ -123,6 +124,8 @@ class InputBar(tk.Frame):
         self._showing_placeholder = True
 
     def _focus_in(self, _event=None) -> None:
+        self._focused = True
+        self._layout()
         if not self.entry.get():
             self._show_placeholder()
 
@@ -136,6 +139,8 @@ class InputBar(tk.Frame):
         self._showing_placeholder = False
 
     def _focus_out(self, _event=None) -> None:
+        self._focused = False
+        self._layout()
         if not self.entry.get():
             self._show_placeholder()
 
@@ -147,7 +152,9 @@ class InputBar(tk.Frame):
         theme.round_rect(self.canvas, 1, 1, width - 1, 52, 16,
                          fill=theme.PANEL if str(self.entry.cget("state")) != "disabled"
                          else theme.PANEL_2,
-                         outline=theme.BORDER, tags="bg")
+                         outline=(theme.MINT_DIM if self._focused
+                                  and str(self.entry.cget("state")) != "disabled"
+                                  else theme.BORDER), tags="bg")
         self.canvas.tag_lower("bg")
         self.canvas.itemconfigure(self._window, width=max(40, width - 36))
         self.canvas.coords(self._window, 18, 27)
@@ -421,20 +428,25 @@ class ChatView(tk.Frame):
         width = self.canvas.winfo_width()
         return max(320, (width - 80) if width > 200 else 600)
 
-    def _build_empty(self) -> tk.Frame:
-        frame = tk.Frame(self.inner, bg=theme.BG)
-        frame.pack(fill="x", pady=(90, 40))
-        avatar = theme.load_avatar(76, bg=theme.BG, ring=theme.MINT_DIM, master=self.inner)
-        image = tk.Label(frame, image=avatar, bg=theme.BG, bd=0)
+    def _build_empty(self) -> tk.Canvas:
+        card = tk.Canvas(self.inner, width=380, height=250, bg=theme.BG,
+                         highlightthickness=0)
+        card.pack(pady=(70, 30))
+        theme.round_rect(card, 1, 1, 379, 249, 22, fill=theme.PANEL,
+                         outline=theme.BORDER)
+        body = tk.Frame(card, bg=theme.PANEL)
+        card.create_window(190, 125, window=body)
+        avatar = theme.load_avatar(76, bg=theme.PANEL, ring=theme.MINT_DIM, master=card)
+        image = tk.Label(body, image=avatar, bg=theme.PANEL, bd=0)
         image.image = avatar
         image.pack()
-        tk.Label(frame, text="江慕白", bg=theme.BG, fg=theme.TEXT,
+        tk.Label(body, text="江慕白", bg=theme.PANEL, fg=theme.TEXT,
                  font=("Microsoft YaHei UI", 15, "bold")).pack(pady=(12, 2))
-        tk.Label(frame, text="在。想写点什么？", bg=theme.BG, fg=theme.MUTED,
+        tk.Label(body, text="在。想写点什么？", bg=theme.PANEL, fg=theme.MUTED,
                  font=theme.FONT).pack()
-        tk.Label(frame, text="直接说话，或者问「今天有什么」", bg=theme.BG,
+        tk.Label(body, text="直接说话，或者问「今天有什么」", bg=theme.PANEL,
                  fg=theme.MUTED, font=theme.FONT_TINY).pack(pady=(6, 0))
-        return frame
+        return card
 
     def _hide_empty(self) -> None:
         if self._empty is not None:
