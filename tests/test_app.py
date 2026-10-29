@@ -75,6 +75,7 @@ class AppSmokeTest(unittest.TestCase):
                     md.write_text("# jmb 每日清单", encoding="utf-8")
                     window._check_brief()
                     self.assertIn("清单", window.pet.bubble_window.label.cget("text"))
+                    self.assertIsNotNone(window.pet.bubble_window._on_click)
                     self.assertIn("今天的清单好了", window.text.get("1.0", "end"))
                     window.pet.bubble_window.label.config(text="sentinel")
                     window._check_brief()
@@ -88,6 +89,34 @@ class AppSmokeTest(unittest.TestCase):
                     os.environ.pop("JMB_HOME", None)
                 else:
                     os.environ["JMB_HOME"] = old
+
+    def test_pet_click_opens_chat_and_bubble_click_fires(self) -> None:
+        try:
+            from jmb.app.main import MainWindow
+
+            window = MainWindow(start_worker=False)
+        except tk.TclError:
+            self.skipTest("no display")
+        try:
+            from types import SimpleNamespace
+
+            window.withdraw()
+            window.pet.win.withdraw()
+            calls: list[str] = []
+            window.pet.on_click = lambda: calls.append("pet")
+            window.pet._press(SimpleNamespace(x_root=100, y_root=100))
+            window.pet._release(SimpleNamespace(x_root=102, y_root=101))
+            self.assertEqual(calls, ["pet"])
+            window.pet._press(SimpleNamespace(x_root=100, y_root=100))
+            window.pet._release(SimpleNamespace(x_root=140, y_root=160))
+            self.assertEqual(calls, ["pet"])
+
+            window.pet.bubble("hi", 1000, on_click=lambda: calls.append("bubble"))
+            window.pet.bubble_window._clicked()
+            self.assertEqual(calls, ["pet", "bubble"])
+            self.assertFalse(window.pet.bubble_window.win.winfo_ismapped())
+        finally:
+            window.close()
 
     def test_brief_notify_invokes_powershell(self) -> None:
         import sys

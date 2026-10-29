@@ -52,11 +52,15 @@ class BubbleWindow:
             self.win, text="", bg="#f5f5f5", fg="#1e1f22",
             wraplength=300, justify="left", padx=12, pady=10,
             font=("Microsoft YaHei UI", 10))
-        self.label.pack()
+        self.label.pack(fill="both", expand=True)
+        self.label.bind("<Button-1>", self._clicked)
         self.win.withdraw()
         self._after: str | None = None
+        self._on_click = None
 
-    def show(self, text: str, x: int, y: int, milliseconds: int = 5000) -> None:
+    def show(self, text: str, x: int, y: int, milliseconds: int = 5000,
+             on_click=None) -> None:
+        self._on_click = on_click
         self.label.config(text=text)
         self.win.update_idletasks()
         width = min(340, max(200, self.label.winfo_reqwidth() + 24))
@@ -67,6 +71,12 @@ class BubbleWindow:
         if self._after is not None:
             self.win.after_cancel(self._after)
         self._after = self.win.after(max(1000, milliseconds), self.win.withdraw)
+
+    def _clicked(self, _event=None) -> None:
+        if self._on_click is not None:
+            callback, self._on_click = self._on_click, None
+            self.win.withdraw()
+            callback()
 
     def move(self, x: int, y: int) -> None:
         self.win.geometry(f"+{x}+{y}")
@@ -98,7 +108,9 @@ class PetWindow:
         self.state = "idle"
         self.tick = 0
         self.blink = False
+        self.on_click = None
         self._drag: tuple[int, int] | None = None
+        self._press_pos: tuple[int, int] | None = None
         self._after: str | None = None
         self._closed = False
         self._sprite_frames = self._load_sprites()
@@ -205,13 +217,14 @@ class PetWindow:
         if not self._closed:
             self._draw()
 
-    def bubble(self, text: str, milliseconds: int = 5000) -> None:
+    def bubble(self, text: str, milliseconds: int = 5000, on_click=None) -> None:
         x = self.win.winfo_x() + 10
         y = max(0, self.win.winfo_y() - 58)
-        self.bubble_window.show(text, x, y, milliseconds)
+        self.bubble_window.show(text, x, y, milliseconds, on_click=on_click)
 
     def _press(self, event: tk.Event) -> None:
         self._drag = (event.x_root - self.win.winfo_x(), event.y_root - self.win.winfo_y())
+        self._press_pos = (event.x_root, event.y_root)
 
     def _move(self, event: tk.Event) -> None:
         if self._drag is None:
@@ -223,6 +236,12 @@ class PetWindow:
 
     def _release(self, event: tk.Event) -> None:
         self._drag = None
+        pressed = self._press_pos
+        self._press_pos = None
+        if (pressed is not None and self.on_click is not None
+                and abs(event.x_root - pressed[0]) <= 4
+                and abs(event.y_root - pressed[1]) <= 4):
+            self.on_click()
 
     def close(self) -> None:
         if self._closed:

@@ -135,6 +135,7 @@ class MainWindow(tk.Tk):
         self._poll_id: str | None = None
         self.worker: ChatWorker | None = None
         self.pet = PetWindow(self)
+        self.pet.on_click = self._show_chat
         self._build_ui()
         menubar = tk.Menu(self)
         file_menu = tk.Menu(menubar, tearoff=0)
@@ -240,6 +241,12 @@ class MainWindow(tk.Tk):
         self.undo_button.config(state="disabled")
         self.worker.undo()
 
+    def _show_chat(self) -> None:
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+        self.entry.focus_set()
+
     def _brief_paths(self) -> tuple:
         today = date.today()
         return (config.brief_state_path(today),
@@ -274,9 +281,9 @@ class MainWindow(tk.Tk):
         except (OSError, ValueError):
             pass
         head = f"{count} 条新项目" if count else "清单已生成"
-        self._append(f"jmb> 今天的清单好了（{head}）。点「文件 → 今日清单」看全文。\n",
+        self._append(f"jmb> 今天的清单好了（{head}）。点这条气泡或「文件 → 今日清单」看全文。\n",
                      "assistant")
-        self.pet.bubble("今天的清单好了", 7000)
+        self.pet.bubble("今天的清单好了，点我看全文", 7000, on_click=self.show_brief)
         try:
             seen_path.parent.mkdir(parents=True, exist_ok=True)
             seen_path.write_text(json.dumps({"file": state.name, "mtime": mtime}),
@@ -349,7 +356,7 @@ class MainWindow(tk.Tk):
                 f"[它改了 {data.get('target', '?')}，undo 可撤]"
                 f"{('：' + note) if note else ''}\n", "edit")
             self.pet.set_state("waving")
-            self.pet.bubble("我改了自己的记录，undo 可撤。", 3500)
+            self.pet.bubble("我改了自己的记录，undo 可撤。", 3500, on_click=self._show_chat)
         elif kind == "code":
             receipt = str(data.get("receipt", ""))
             self._append(f"[{data.get('name')}]\n{receipt[:2000]}\n", "meta")

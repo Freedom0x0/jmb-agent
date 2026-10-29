@@ -786,6 +786,7 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 - 任务设置只改两条：`DisallowStartIfOnBatteries=false`、`StopIfGoingOnBatteries=false`（用电池也跑）。**不动 D30 的"不补跑"**：`StartWhenAvailable` 保持 false，不挂 ONLOGON/ONSTART。
 - 投递面（两道）：①清单**新生成**时 `brief.py` 发一条 Windows 通知（PowerShell WinRT toast，AUMID=`jmb`，本机实测可用；app 关着也能收到）；②app 壳每 60 秒检查今天的 `brief-YYYY-MM-DD.json`，未提醒过就在**聊天窗口里留一条 `jmb>` 消息** + 冒一次桌宠气泡，并写 `brief-seen.json`（同一天不重复）；菜单「文件 → 今日清单」用默认程序打开 md。
 - app 没开：只有 toast；下次打开 app 会对当天未提醒过的清单补一条聊天消息（只是提醒，不重跑数据）。
+- 可点性：**单击桌宠恢复/聚焦聊天窗口**（拖动阈值 4px，不会误触）；**清单气泡可点**，直接打开全文——避免"菜单在最小化的窗口里、桌宠上找不到"。
 - 通知只在**新生成**时发；幂等命中（"今天已跑过"）不重复打扰。
 
 【代价】toast 受 Windows 通知设置/专注助手影响，可能被折叠；app 内消息需要 app 开着（杀进程/重启后是新的 Tk 窗口，旧滚动内容不保留，但 transcript 在磁盘上）。
