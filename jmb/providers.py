@@ -27,6 +27,23 @@ class ProviderProfile:
     supports_server_web_search: bool = False
     echo_thinking_required: bool = False   # True = 真 Anthropic thinking 必须回传
     allow_thinking_drop: bool = True       # 预算闸门能不能丢老轮次的 thinking 块
+    context_window: int = 128_000          # 模型窗口；预算按它算，不写死 30k
+    input_budget: int = 30_000             # 软预算（system+tools+history）
+
+
+def budget_for_model(model: str) -> tuple[int, int]:
+    """(context_window, input_budget)。1M 模型不把 1M 当工作区用。"""
+    if "1m" in (model or "").lower():
+        return 1_000_000, 120_000
+    return 128_000, 30_000
+
+
+def _env_positive(name: str) -> int | None:
+    try:
+        value = int(os.environ.get(name, ""))
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 @dataclass
@@ -39,20 +56,30 @@ class Turn:
 def load_profile() -> ProviderProfile:
     name = os.environ.get("JMB_PROVIDER", "deepseek-anthropic")
     if name == "openai":
+        window, budget = budget_for_model(os.environ.get("JMB_OPENAI_MODEL", "gpt-4o-mini"))
         return ProviderProfile(
             "openai", "openai",
             os.environ.get("JMB_OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            os.environ.get("JMB_OPENAI_MODEL", "gpt-4o-mini"))
+            os.environ.get("JMB_OPENAI_MODEL", "gpt-4o-mini"),
+            context_window=_env_positive("JMB_CONTEXT_WINDOW") or window,
+            input_budget=_env_positive("JMB_INPUT_BUDGET") or budget)
     if name == "openai-mock":
+        window, budget = budget_for_model(os.environ.get("JMB_OPENAI_MODEL", "mock-model"))
         return ProviderProfile(
             "openai-mock", "openai",
             os.environ.get("JMB_OPENAI_BASE_URL", "http://127.0.0.1:8791/v1"),
-            os.environ.get("JMB_OPENAI_MODEL", "mock-model"))
+            os.environ.get("JMB_OPENAI_MODEL", "mock-model"),
+            context_window=_env_positive("JMB_CONTEXT_WINDOW") or window,
+            input_budget=_env_positive("JMB_INPUT_BUDGET") or budget)
     # 默认：当前在用的这条线路（DeepSeek 的 Anthropic 兼容端点）
+    model = config.resolve_model().value
+    window, budget = budget_for_model(model)
     return ProviderProfile(
         "deepseek-anthropic", "anthropic",
-        config.resolve_base_url().value, config.resolve_model().value,
-        supports_server_web_search=True, echo_thinking_required=False, allow_thinking_drop=True)
+        config.resolve_base_url().value, model,
+        supports_server_web_search=True, echo_thinking_required=False, allow_thinking_drop=True,
+        context_window=_env_positive("JMB_CONTEXT_WINDOW") or window,
+        input_budget=_env_positive("JMB_INPUT_BUDGET") or budget)
 
 
 # ---- 线路一：Anthropic 协议 ----
@@ -208,6 +235,36 @@ def _no_proxy_http():
         import httpx2 as httpx  # type: ignore
 
     return httpx.Client(trust_env=False, timeout=300.0)
+
+
+def complete(profile: ProviderProfile, system: str, user: str, max_tokens: int = 1800) -> str:
+    """一次性非流式补全（只给上下文压缩用，不挂工具/人格）。"""
+    token = config.resolve_token()
+    if not token.value:
+        raise RuntimeError("没有模型凭据")
+    if profile.protocol == "anthropic":
+        import anthropic
+
+        client = anthropic.Anthropic(base_url=profile.base_url, auth_token=token.value,
+                                     timeout=180.0, max_retries=1)
+        parts: list[str] = []
+        with client.messages.stream(
+                model=profile.model, max_tokens=max_tokens, temperature=0, system=system,
+                messages=[{"role": "user", "content": user}]) as stream:
+            for event in stream:
+                if (event.type == "content_block_delta"
+                        and event.delta.type == "text_delta"):
+                    parts.append(event.delta.text)
+        return "".join(parts).strip()
+    from openai import OpenAI
+
+    client = OpenAI(base_url=profile.base_url, api_key=token.value,
+                    timeout=180.0, max_retries=1)
+    response = client.chat.completions.create(
+        model=profile.model, max_tokens=max_tokens, temperature=0,
+        messages=[{"role": "system", "content": system},
+                  {"role": "user", "content": user}])
+    return (response.choices[0].message.content or "").strip()
 
 
 def stream_turn(profile: ProviderProfile, system: str, tools: list, history: list, on_event) -> Turn:

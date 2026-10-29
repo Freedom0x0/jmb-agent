@@ -348,6 +348,14 @@ class MainWindow(tk.Tk):
         elif kind == "activity":
             self._append(f"{data}\n", "meta")
             self.pet.set_state("working")
+        elif kind == "compacting":
+            self.status.config(text="压缩上下文…")
+            self.pet.set_state("working")
+        elif kind == "compacted":
+            self._append(f"[上下文已压缩：{data.get('before')} → {data.get('after')} 条]\n",
+                         "meta")
+            self.status.config(text="压缩完成")
+            self.pet.set_state("idle")
         elif kind == "warning":
             self._append(f"{data}\n", "warn")
         elif kind == "self_edit":

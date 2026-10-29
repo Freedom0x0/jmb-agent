@@ -161,6 +161,37 @@ def _tools(profile) -> list:
 
 # ---- 预算闸门（spec §5.6 本地侧）----
 
+_MASKABLE_TOOLS = {"read_code", "grep", "find", "fetch_page", "search_web", "today_brief"}
+_MASK_TEXT = "[已清理：{name} 的旧结果；需要时重新调用]"
+
+
+def _mask_old_tool_results(history: list, keep: int = 10, min_chars: int = 400) -> None:
+    """第一层压缩：旧的可重取工具结果换成占位符，不花模型调用。"""
+    names: dict[str, str] = {}
+    for message in history:
+        if message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                names[str(block.get("id"))] = str(block.get("name") or "")
+    for message in history[:-keep]:
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            name = names.get(str(block.get("tool_use_id")), "")
+            value = block.get("content")
+            if name in _MASKABLE_TOOLS and isinstance(value, str) and len(value) >= min_chars:
+                block["content"] = _MASK_TEXT.format(name=name)
+
+
 def _trim_search_results(history: list) -> None:
     """每块搜索结果最多留 5 条（spec 的 M=5；服务端无条数参数）。"""
     for message in history:
@@ -173,7 +204,9 @@ def _trim_search_results(history: list) -> None:
                 block["content"] = block["content"][:5]
 
 
-def _enforce_budget(count_fn, profile, system: str, tools: list, history: list) -> None:
+def _enforce_budget(count_fn, profile, system: str, tools: list, history: list,
+                    budget: int = INPUT_BUDGET) -> None:
+    _mask_old_tool_results(history)
     _trim_search_results(history)
     if count_fn is None:  # OpenAI 线暂无 count_tokens ⇒ 只做确定性修剪
         return
@@ -181,7 +214,7 @@ def _enforce_budget(count_fn, profile, system: str, tools: list, history: list) 
         used = count_fn(system, tools, history)
     except Exception:  # noqa: BLE001 —— count_tokens 挂了就跳过闸门，别挡对话
         return
-    if used <= INPUT_BUDGET:
+    if used <= budget:
         return
     # 超预算：老轮次（保留最近 4 条消息）折叠——thinking 丢弃仅当 profile 允许（本线路实测白送）。
     for message in history[:-4]:
@@ -317,12 +350,52 @@ class ChatSession:
         self.log = self.transcript_path.open("a", encoding="utf-8")
         self.history: list[dict] = []
         self.notes: list[str] = []
+        self.input_budget = self.profile.input_budget
+        self.last_input_tokens = 0
+        self._compact_cooldown = 0
         self.closed = False
+
+    def _should_compact(self) -> bool:
+        return (self._compact_cooldown <= 0
+                and self.last_input_tokens >= int(self.input_budget * 0.8)
+                and len(self.history) >= 14)
+
+    def _compact(self) -> None:
+        from . import compact
+        before = len(self.history)
+        self.emit("compacting", "")
+        try:
+            summary = compact.summarize(self.profile, self.history)
+            result = compact.apply(self.history, summary)
+        except Exception as exc:  # noqa: BLE001 —— 压缩失败就用裁剪兜底
+            self.emit("warning", f"[上下文压缩失败：{type(exc).__name__}: "
+                                f"{str(exc)[:120]}；继续用裁剪兜底]")
+            self.last_input_tokens = 0
+            self._compact_cooldown = 3
+            return
+        if result is None:
+            self.last_input_tokens = 0
+            self._compact_cooldown = 3
+            return
+        _cut, after = result
+        self.last_input_tokens = 0
+        try:
+            self.log.write(json.dumps({"ts": _now(), "kind": "compact",
+                                      "before": before, "after": after,
+                                      "summary": summary}, ensure_ascii=False) + "\n")
+            self.log.flush()
+        except Exception:  # noqa: BLE001
+            pass
+        self.emit("compacted", {"before": before, "after": after})
 
     def send(self, text: str) -> None:
         user = (text or "").strip()
         if not user:
             return
+        if self._compact_cooldown > 0:
+            self._compact_cooldown -= 1
+        if self._should_compact():
+            self._compact()
         prefixes: list[str] = []
         if self.notes:
             prefixes.extend(self.notes)
@@ -338,9 +411,11 @@ class ChatSession:
         self.log.flush()
         try:
             self.code_session.begin_turn()
-            _stream_turn(self.profile, self.count_fn, self.system, self.tools,
-                         self.history, self.log, self.fact_memory, self.code_session,
-                         self.emit)
+            usage = _stream_turn(self.profile, self.count_fn, self.system, self.tools,
+                                 self.history, self.log, self.fact_memory, self.code_session,
+                                 self.emit, budget=self.input_budget)
+            if isinstance(usage, dict) and usage.get("input"):
+                self.last_input_tokens = int(usage["input"])
         except Exception as exc:  # noqa: BLE001 —— 一轮失败不拖垮会话
             self.emit("error", f"{type(exc).__name__}: {str(exc)[:300]}")
         finally:
@@ -377,8 +452,9 @@ class ChatSession:
 
 
 def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log,
-                 fact_memory, code_session, emit) -> None:
+                 fact_memory, code_session, emit, budget: int = INPUT_BUDGET) -> dict:
     thinking_shown = False
+    last_usage: dict = {}
 
     def on_event(kind: str, text: str = "") -> None:
         nonlocal thinking_shown
@@ -390,19 +466,20 @@ def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log
             emit(kind, text)
 
     while True:
-        _enforce_budget(count_fn, profile, system, tools, history)
+        _enforce_budget(count_fn, profile, system, tools, history, budget=budget)
         turn = providers.stream_turn(profile, system, tools, history, on_event)
+        last_usage = turn.usage or {}
         emit("text_end", "")
         emit("usage", turn.usage)
         log.write(json.dumps({"ts": _now(), "kind": "assistant", "blocks": turn.blocks,
                               "usage": turn.usage}, ensure_ascii=False) + "\n")
         log.flush()
         if not turn.blocks:
-            return  # 空轮次不进历史，避免下次请求 400
+            return last_usage  # 空轮次不进历史，避免下次请求 400
         history.append({"role": "assistant", "content": turn.blocks})
 
         if turn.stop_reason != "tool_use":
-            return
+            return last_usage
 
         results = []
         for block in turn.blocks:
@@ -431,7 +508,7 @@ def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log
             results.append({"type": "tool_result", "tool_use_id": block.get("id", ""),
                             "content": receipt})
         if not results:
-            return  # 声称 tool_use 却没有工具块：别写空 user 消息
+            return last_usage  # 声称 tool_use 却没有工具块：别写空 user 消息
         history.append({"role": "user", "content": results})
 
 
@@ -450,6 +527,10 @@ def _terminal_emit(kind: str, data) -> None:
         print(f"  └ {_usage_line(data)}")
     elif kind == "activity":
         print(str(data), flush=True)
+    elif kind == "compacting":
+        print("（压缩上下文……）", flush=True)
+    elif kind == "compacted":
+        print(f"  └ 上下文已压缩：{data.get('before')} → {data.get('after')} 条")
     elif kind == "warning":
         print(str(data), flush=True)
     elif kind == "self_edit":

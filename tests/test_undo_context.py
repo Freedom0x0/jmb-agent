@@ -37,7 +37,7 @@ class UndoContextTest(unittest.TestCase):
             captured: list[str] = []
 
             def fake_stream(profile, count_fn, system, tools, history, log,
-                            fact_memory, code_session, emit):
+                            fact_memory, code_session, emit, **kwargs):
                 captured.append(history[-1]["content"])
 
             with mock.patch("jmb.chat._stream_turn", fake_stream):
