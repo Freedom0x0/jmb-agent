@@ -116,6 +116,14 @@ class BriefEventTest(unittest.TestCase):
         self.assertFalse(brief._relevant_event("AI 营销实战训练营"))
         self.assertFalse(brief._relevant_event("设计周"))
 
+    def test_event_line_keeps_beijing_city_name(self) -> None:
+        start = dt.datetime(2026, 10, 30, 14, 0)
+        base = {"title": "AI 技术沙龙", "url": "u", "start": start, "source": "lianpu（补充）"}
+        self.assertIn("北京 · 北京市海淀区某地",
+                      brief._event_line({**base, "venue": "北京 · 北京市海淀区某地"}))
+        self.assertIn("北京 · 218视觉工厂",
+                      brief._event_line({**base, "venue": "北京 · 北京 218视觉工厂"}))
+
     def test_dedupe_same_slot_and_similar_title(self) -> None:
         start = dt.datetime(2026, 10, 31, 13, 0)
         events = [

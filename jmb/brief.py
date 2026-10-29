@@ -474,7 +474,7 @@ def collect_events() -> tuple[list[dict], list[str]]:
 def _event_line(event: dict) -> str:
     start = event["start"]
     when = f"{start:%m/%d}（周{_weekday_cn(start.date())}）{start:%H:%M}"
-    venue = re.sub(r"^北京 · 北京\s*", "北京 · ", event["venue"])
+    venue = re.sub(r"^北京 · 北京\s+", "北京 · ", event["venue"])
     return (f"{when} · {event['title'][:80]} · {venue[:60]} · 免费 · "
             f"{event['source']} · {event['url']}")
 
