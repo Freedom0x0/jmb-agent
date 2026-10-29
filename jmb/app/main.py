@@ -122,7 +122,7 @@ class MainWindow(tk.Tk):
     def __init__(self, start_worker: bool = True) -> None:
         super().__init__()
         self.title("jmb")
-        self.geometry("860x640")
+        self.geometry("860x640+140+80")
         self.minsize(640, 480)
         self.configure(bg=BG)
         self.busy = False
@@ -132,6 +132,11 @@ class MainWindow(tk.Tk):
         self.worker: ChatWorker | None = None
         self.pet = PetWindow(self)
         self._build_ui()
+        menubar = tk.Menu(self)
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        edit_menu.add_command(label="撤销", command=self.undo)
+        menubar.add_cascade(label="编辑", menu=edit_menu)
+        self.config(menu=menubar)
         if start_worker:
             self._start_worker()
         else:
