@@ -118,8 +118,10 @@ def _openai_messages(system: str, history: list) -> list[dict]:
                                        "function": {"name": block["name"],
                                                     "arguments": json.dumps(block.get("input", {}),
                                                                             ensure_ascii=False)}})
-            item: dict = {"role": "assistant",
-                          "content": "\n".join(t for t in text_parts if t) or None}
+            text = "\n".join(t for t in text_parts if t)
+            if not text and not tool_calls:
+                continue  # 只含 thinking 的助手消息在 OpenAI 线上无内容可发
+            item: dict = {"role": "assistant", "content": text or None}
             if tool_calls:
                 item["tool_calls"] = tool_calls
             messages.append(item)

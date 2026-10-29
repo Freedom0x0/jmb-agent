@@ -198,6 +198,8 @@ def _enforce_budget(count_fn, profile, system: str, tools: list, history: list) 
             if block.get("type") == "web_search_tool_result" and isinstance(block.get("content"), list):
                 block = {**block, "content": block["content"][:2]}
             kept.append(block)
+        if not kept:
+            continue  # 整条只有可丢块（如 thinking-only）：保留原样，别写成空 content
         message["content"] = kept
 
 
@@ -395,6 +397,8 @@ def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log
         log.write(json.dumps({"ts": _now(), "kind": "assistant", "blocks": turn.blocks,
                               "usage": turn.usage}, ensure_ascii=False) + "\n")
         log.flush()
+        if not turn.blocks:
+            return  # 空轮次不进历史，避免下次请求 400
         history.append({"role": "assistant", "content": turn.blocks})
 
         if turn.stop_reason != "tool_use":
@@ -426,6 +430,8 @@ def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log
                                      ensure_ascii=False) + "\n")
             results.append({"type": "tool_result", "tool_use_id": block.get("id", ""),
                             "content": receipt})
+        if not results:
+            return  # 声称 tool_use 却没有工具块：别写空 user 消息
         history.append({"role": "user", "content": results})
 
 
