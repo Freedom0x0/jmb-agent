@@ -238,8 +238,6 @@ class PetWindow:
         color = STATE_COLORS.get(self.state, STATE_COLORS["idle"])
         bob = int(math.sin(self.tick / 9.0) * 2) + self._bounce
         frames = self._sprite_frames.get(self.state) or self._sprite_frames.get("idle")
-        canvas.create_oval(68, 206, 152, 220, fill="#1a1d22", outline="",
-                           stipple="gray12")
         if self._hover:
             canvas.create_oval(11, 1, 209, 217, outline=_shade(color, 0.8), width=1)
         if frames:
