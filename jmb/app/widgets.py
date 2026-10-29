@@ -500,3 +500,66 @@ class ChatView(tk.Frame):
             self.canvas.yview_moveto(1.0)
         except tk.TclError:
             pass
+
+
+def _center(win: tk.Toplevel, parent: tk.Misc, width: int, height: int) -> None:
+    try:
+        parent.update_idletasks()
+        x = parent.winfo_rootx() + max(0, (parent.winfo_width() - width) // 2)
+        y = parent.winfo_rooty() + max(0, (parent.winfo_height() - height) // 2)
+    except tk.TclError:
+        x = (win.winfo_screenwidth() - width) // 2
+        y = (win.winfo_screenheight() - height) // 2
+    win.geometry(f"{width}x{height}+{max(0, x)}+{max(0, y)}")
+
+
+def ask_yes_no(parent: tk.Misc, title: str, message: str,
+               yes: str = "允许", no: str | None = "取消") -> bool:
+    """深色模态确认窗；no=None 时只有一个确认按钮。"""
+    win = tk.Toplevel(parent)
+    win.title(title)
+    win.configure(bg=theme.BG)
+    win.transient(parent)
+    win.resizable(False, False)
+    result = {"ok": False}
+    body = tk.Frame(win, bg=theme.BG)
+    body.pack(fill="both", expand=True, padx=22, pady=18)
+    tk.Label(body, text=title, bg=theme.BG, fg=theme.TEXT, anchor="w",
+             font=("Microsoft YaHei UI", 12, "bold")).pack(fill="x")
+    tk.Label(body, text=message, bg=theme.BG, fg=theme.MUTED, anchor="w",
+             justify="left", wraplength=430, font=theme.FONT).pack(
+        fill="x", pady=(10, 18))
+    row = tk.Frame(body, bg=theme.BG)
+    row.pack(fill="x", anchor="e")
+    row.grid_columnconfigure(0, weight=1)
+    if no is not None:
+        RoundedButton(row, no, command=lambda: close(False), width=80, height=36,
+                      fill=theme.PANEL_2, fg=theme.TEXT, hover=theme.BORDER,
+                      font=theme.FONT, radius=12).grid(row=0, column=1, padx=(8, 0))
+    RoundedButton(row, yes, command=lambda: close(True), width=96, height=36,
+                  fill=theme.MINT, fg=theme.BG, hover="#8af0de",
+                  font=theme.FONT, radius=12).grid(row=0, column=2, padx=(8, 0))
+
+    def close(ok: bool) -> None:
+        result["ok"] = ok
+        try:
+            win.grab_release()
+        except tk.TclError:
+            pass
+        win.destroy()
+
+    win.protocol("WM_DELETE_WINDOW", lambda: close(False))
+    win.bind("<Escape>", lambda _e: close(False))
+    win.update_idletasks()
+    width = max(460, body.winfo_reqwidth() + 44)
+    height = body.winfo_reqheight() + 36
+    _center(win, parent, width, height)
+    theme.enable_dark_titlebar(win)
+    win.grab_set()
+    win.focus_force()
+    parent.wait_window(win)
+    return bool(result["ok"])
+
+
+def show_message(parent: tk.Misc, title: str, message: str) -> None:
+    ask_yes_no(parent, title, message, yes="好", no=None)

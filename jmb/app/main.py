@@ -9,12 +9,11 @@ import threading
 import tkinter as tk
 import uuid
 from datetime import date
-from tkinter import messagebox
 
 from .. import config
 from . import theme
 from .pet import PetWindow
-from .widgets import ChatView, InputBar, RoundedButton
+from .widgets import ChatView, InputBar, RoundedButton, ask_yes_no, show_message
 
 BG = theme.BG
 PANEL = theme.PANEL
@@ -148,6 +147,7 @@ class MainWindow(tk.Tk):
             pass
         self.update_idletasks()
         theme.enable_dark_titlebar(self)
+        self.after(120, self._apply_dark_titlebar)
         if start_worker:
             self._start_worker()
         else:
@@ -232,6 +232,10 @@ class MainWindow(tk.Tk):
         self.clipboard_append(text)
         self.status.config(text="已复制最后一条")
 
+    def _apply_dark_titlebar(self) -> None:
+        if not self._destroyed:
+            theme.enable_dark_titlebar(self)
+
     def _show_menu(self) -> None:
         menu = tk.Menu(self, tearoff=0, bg=theme.PANEL, fg=TEXT,
                        activebackground=theme.MINT_DIM, activeforeground=TEXT,
@@ -240,8 +244,8 @@ class MainWindow(tk.Tk):
         menu.add_command(label="复制最后一条回复", command=self._copy_last)
         menu.add_command(label="撤销上一轮", command=self.undo)
         menu.add_separator()
-        menu.add_command(label="关于 jmb", command=lambda: messagebox.showinfo(
-            "关于 jmb", "jmb · 江慕白\n本地会话 · Tkinter 壳", parent=self))
+        menu.add_command(label="关于 jmb", command=lambda: show_message(
+            self, "关于 jmb", "jmb · 江慕白\n本地会话 · Tkinter 壳"))
         menu.add_command(label="退出", command=self.close)
         x = self.more_button.winfo_rootx()
         y = self.more_button.winfo_rooty() + self.more_button.winfo_height() + 4
@@ -429,7 +433,7 @@ class MainWindow(tk.Tk):
             self.pet.set_state("failed")
         elif kind == "permission":
             self.pet.set_state("waiting")
-            ok = messagebox.askyesno("jmb 需要授权", str(data.get("text", "")), parent=self)
+            ok = ask_yes_no(self, "需要授权", str(data.get("text", "")), "允许", "拒绝")
             if self.worker is not None:
                 self.worker.answer_permission(str(data.get("id", "")), ok)
             self.pet.set_state("thinking" if ok else "idle")
@@ -441,7 +445,7 @@ class MainWindow(tk.Tk):
                 text += f"\n（还有 {more} 条下次再问）"
             text += "\n\n全部记进长期记忆吗？选“否”会全部不要。"
             self.pet.set_state("waiting")
-            ok = messagebox.askyesno("jmb 会话收尾", text, parent=self)
+            ok = ask_yes_no(self, "会话收尾", text, "全部记", "全部不要")
             if self.worker is not None:
                 self.worker.answer_confirmation("ok" if ok else "no")
             self.pet.set_state("idle")
@@ -462,7 +466,7 @@ class MainWindow(tk.Tk):
         elif kind == "fatal":
             self.chat.append(f"启动失败：{data}", "error")
             self.pet.set_state("failed")
-            messagebox.showerror("jmb 启动失败", str(data))
+            show_message(self, "启动失败", str(data))
 
     def close(self) -> None:
         if self._destroyed or self._closing:
