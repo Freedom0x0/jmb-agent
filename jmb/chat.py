@@ -333,14 +333,19 @@ class ChatSession:
 
         self.code_session = code.CodeSession()
         self.count_fn = None
+        self._count_client = None
         if self.profile.protocol == "anthropic":
-            import anthropic
-            client = anthropic.Anthropic(base_url=self.profile.base_url,
-                                         auth_token=config.resolve_token().value,
-                                         timeout=120.0, max_retries=1)
-            self.count_fn = lambda system, tools, history: (  # noqa: E731
-                client.messages.count_tokens(model=self.profile.model, system=system,
-                                             tools=tools, messages=history).input_tokens)
+            def _count(system, tools, history):
+                if self._count_client is None:
+                    import anthropic  # 延迟加载：启动不必等这个 10s+ 的导入
+                    self._count_client = anthropic.Anthropic(
+                        base_url=self.profile.base_url,
+                        auth_token=config.resolve_token().value,
+                        timeout=120.0, max_retries=1)
+                return self._count_client.messages.count_tokens(
+                    model=self.profile.model, system=system,
+                    tools=tools, messages=history).input_tokens
+            self.count_fn = _count
 
         self.system = prefix.build_system()
         self.tools = _tools(self.profile)

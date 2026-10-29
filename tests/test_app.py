@@ -197,7 +197,7 @@ class AppSmokeTest(unittest.TestCase):
         run.assert_called_once()
         self.assertIn("8", run.call_args.args[0][-1])
 
-    def test_chat_worker_ready_and_stop(self) -> None:
+    def test_00_chat_worker_ready_and_stop(self) -> None:
         import os
         import tempfile
         from pathlib import Path
