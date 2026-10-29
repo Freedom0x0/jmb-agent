@@ -151,6 +151,14 @@ class BubbleWindow:
         self.win.destroy()
 
 
+def _star(canvas: tk.Canvas, cx: int, cy: int, radius: int, fill: str) -> None:
+    k = radius * 0.28
+    canvas.create_polygon(
+        cx, cy - radius, cx + k, cy - k, cx + radius, cy, cx + k, cy + k,
+        cx, cy + radius, cx - k, cy + k, cx - radius, cy, cx - k, cy - k,
+        fill=fill, outline="")
+
+
 class PetWindow:
     def __init__(self, master: tk.Misc) -> None:
         self.win = tk.Toplevel(master)
@@ -177,6 +185,7 @@ class PetWindow:
         self._closed = False
         self._hover = False
         self._bounce = 0
+        self._sparkle = 0
         self._sprite_frames = self._load_sprites()
         self.bubble_window = BubbleWindow(master)
         self._place()
@@ -244,6 +253,15 @@ class PetWindow:
         canvas.create_oval(69, 239, 77, 247, fill=color, outline="")
         canvas.create_text(83, 242, anchor="w", text=chip, fill=theme.TEXT,
                            font=theme.FONT_TINY)
+        if self._hover or self._sparkle > 0:
+            sparkle = _shade(color, 1.12)
+            points = [(36, 46, 4), (187, 66, 3), (176, 176, 3)]
+            if self._sparkle > 0:
+                points += [(50, 90, 3), (168, 126, 4), (148, 38, 2)]
+            for index, (sx, sy, size) in enumerate(points):
+                if (self.tick // 5 + index) % 2:
+                    size = max(2, size - 1)
+                _star(canvas, sx, sy, size, sparkle)
 
     def _animate(self) -> None:
         if self._closed:
@@ -251,6 +269,8 @@ class PetWindow:
         self.tick += 1
         if self._bounce > 0:
             self._bounce = max(0, self._bounce - 1)
+        if self._sparkle > 0:
+            self._sparkle = max(0, self._sparkle - 1)
         if self.tick % 22 == 0:
             self.blink = True
             self.win.after(160, self._unblink)
@@ -263,7 +283,10 @@ class PetWindow:
             self._draw()
 
     def set_state(self, state: str) -> None:
-        self.state = state if state in STATE_COLORS else "idle"
+        state = state if state in STATE_COLORS else "idle"
+        if state != self.state and state in ("thinking", "waving", "failed"):
+            self._bounce = 4
+        self.state = state
         if not self._closed:
             self._draw()
 
@@ -320,6 +343,7 @@ class PetWindow:
                 and abs(event.x_root - pressed[0]) <= 4
                 and abs(event.y_root - pressed[1]) <= 4):
             self._bounce = 6
+            self._sparkle = 10
             self.on_click()
 
     def close(self) -> None:
