@@ -1,6 +1,7 @@
 """自绘圆角控件 + 气泡聊天视图（Tkinter 原生控件没有圆角）。"""
 from __future__ import annotations
 
+import re
 import tkinter as tk
 from tkinter import font as tkfont
 
@@ -168,6 +169,92 @@ class InputBar(tk.Frame):
     def focus_set(self) -> None:
         self.entry.focus_set()
         self._focus_in()
+
+
+_FENCE_RE = re.compile(r"```([^\n]*)\n(.*?)(?:```|$)", re.S)
+
+
+def split_segments(text: str) -> list[tuple[str, str, str]]:
+    """把消息拆成 (kind, content, lang) 段；支持未闭合的代码围栏。"""
+    text = text or ""
+    parts: list[tuple[str, str, str]] = []
+    position = 0
+    for match in _FENCE_RE.finditer(text):
+        before = text[position:match.start()].strip("\n")
+        if before.strip():
+            parts.append(("text", before, ""))
+        code_text = match.group(2).rstrip("\n")
+        if code_text.strip():
+            parts.append(("code", code_text, match.group(1).strip()))
+        position = match.end()
+    tail = text[position:].strip("\n")
+    if tail.strip():
+        parts.append(("text", tail, ""))
+    return parts or [("text", text, "")]
+
+
+class CodeBubble(tk.Canvas):
+    MAX_LINES = 22
+
+    def __init__(self, master, code: str, lang: str = "", max_width: int = 600):
+        super().__init__(master, bg=theme.BG, highlightthickness=0, bd=0)
+        self._font = tkfont.Font(root=self, font=("Consolas", 9))
+        self._pad = 12
+        self._code = code
+        lines = code.splitlines() or [""]
+        total = len(lines)
+        shown = lines[:self.MAX_LINES]
+        wrapped: list[str] = []
+        for line in shown:
+            wrapped.extend(self._wrap(line, max_width - self._pad * 2 - 6) or [""])
+        truncated = total > len(shown)
+        line_h = self._font.metrics("linespace") + 2
+        header = 14 if lang else 0
+        text_width = max((self._font.measure(line) for line in wrapped), default=0)
+        width = max(160, min(max_width, text_width + self._pad * 2 + 8))
+        height = (len(wrapped) * line_h + self._pad * 2 + header
+                  + (line_h if truncated else 0))
+        self.configure(width=width, height=height)
+        theme.round_rect(self, 1, 1, width - 1, height - 1, 10,
+                         fill="#0f1217", outline="#26313a")
+        theme.round_rect(self, 0, 0, 3, height, 1, fill=theme.MINT, outline="")
+        y = self._pad
+        if lang:
+            self.create_text(width - self._pad, 6, anchor="ne", text=lang,
+                             fill=theme.MUTED, font=theme.FONT_TINY)
+            y += header
+        self.create_text(self._pad + 4, y, anchor="nw", text=chr(10).join(wrapped),
+                         fill="#d6e2ea", font=self._font)
+        if truncated:
+            self.create_text(self._pad + 4, y + len(wrapped) * line_h, anchor="nw",
+                             text=f"…（共 {total} 行，已折叠）", fill=theme.MUTED,
+                             font=theme.FONT_TINY)
+        self.bind("<Button-3>", self._copy_menu)
+
+    def _wrap(self, line: str, max_px: int) -> list[str]:
+        if not line:
+            return [""]
+        out: list[str] = []
+        current = ""
+        for char in line:
+            if self._font.measure(current + char) <= max_px:
+                current += char
+            else:
+                out.append(current)
+                current = char
+        out.append(current)
+        return out
+
+    def _copy_menu(self, event) -> None:
+        menu = tk.Menu(self, tearoff=0, bg=theme.PANEL, fg=theme.TEXT,
+                       activebackground=theme.MINT_DIM, activeforeground=theme.TEXT)
+        menu.add_command(label="复制代码",
+                         command=lambda: (self.clipboard_clear(),
+                                          self.clipboard_append(self._code)))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
 
 class ChatBubble(tk.Canvas):
@@ -345,7 +432,17 @@ class ChatView(tk.Frame):
         for child in widget.winfo_children():
             self._bind_wheel(child)
 
-    def _row(self, text: str, role: str) -> tk.Frame:
+    def _segments(self, parent: tk.Frame, text: str, role: str,
+                  max_width: int, anchor: str) -> None:
+        for kind, value, lang in split_segments(text):
+            if kind == "code":
+                widget = CodeBubble(parent, value, lang, max_width)
+            else:
+                widget = ChatBubble(parent, value, role, max_width)
+            widget.pack(anchor=anchor, pady=(0, 6))
+            self._bind_wheel(widget)
+
+    def _row(self, text: str, role: str, stream: bool = False) -> tk.Frame:
         self._hide_empty()
         row = tk.Frame(self.inner, bg=theme.BG)
         row.pack(fill="x")
@@ -359,13 +456,19 @@ class ChatView(tk.Frame):
                         padx=(0, 80), pady=(2, 10))
             tk.Label(column, text="江慕白", bg=theme.BG, fg=theme.MINT,
                      font=theme.FONT_NAME).pack(anchor="w", pady=(0, 4))
-            bubble = ChatBubble(column, text, role, self._bubble_width())
-            bubble.pack(anchor="w")
+            if stream:
+                bubble = ChatBubble(column, text, role, self._bubble_width())
+                bubble.pack(anchor="w")
+            else:
+                content = tk.Frame(column, bg=theme.BG)
+                content.pack(anchor="w")
+                self._segments(content, text, role, self._bubble_width(), "w")
             self._bind_wheel(row)
         elif role == "user":
-            bubble = ChatBubble(row, text, role, self._bubble_width())
-            bubble.pack(side="right", anchor="e", padx=(90, 18), pady=(4, 10))
-            self._bind_wheel(bubble)
+            content = tk.Frame(row, bg=theme.BG)
+            content.pack(side="right", anchor="e", padx=(90, 18), pady=(4, 10))
+            self._segments(content, text, role, self._bubble_width(), "e")
+            self._bind_wheel(content)
         else:
             row.destroy()
             return self._meta_row(text, role)
@@ -408,7 +511,7 @@ class ChatView(tk.Frame):
             self.begin_stream()
         self._stream_text += delta or ""
         if self._stream_bubble is None and self._stream_text.strip():
-            self._stream_row = self._row(self._stream_text, "assistant")
+            self._stream_row = self._row(self._stream_text, "assistant", stream=True)
             self._messages.append({"role": "assistant", "text": self._stream_text,
                                    "row": self._stream_row, "stream": True})
             for child in self._stream_row.winfo_children():
@@ -436,10 +539,17 @@ class ChatView(tk.Frame):
         if self._stream_bubble is not None:
             self._flush_stream()
         if self._messages and self._messages[-1].get("stream"):
-            self._messages[-1].pop("stream", None)
+            message = self._messages[-1]
+            message.pop("stream", None)
             if not self._stream_text.strip():
                 row = self._messages.pop()["row"]
                 row.destroy()
+            elif "```" in message["text"]:
+                old_row = message["row"]
+                old_row.destroy()
+                message["row"] = self._row(message["text"], "assistant")
+                if self._stream_stick:
+                    self._scroll_to_end()
         self._stream_active = False
         self._stream_text = ""
         self._stream_row = None

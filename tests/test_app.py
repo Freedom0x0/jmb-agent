@@ -156,6 +156,39 @@ class AppSmokeTest(unittest.TestCase):
         finally:
             window.close()
 
+    def test_code_fence_stream_rebuild(self) -> None:
+        try:
+            from jmb.app.main import MainWindow
+
+            window = MainWindow(start_worker=False)
+        except tk.TclError:
+            self.skipTest("no display")
+        try:
+            window.withdraw()
+            window.pet.win.withdraw()
+            window.chat.begin_stream()
+            window.chat.stream("""看：
+```python
+print(1)
+```
+好了""")
+            window.chat.end_stream()
+            self.assertIn("print(1)", window.chat.plain_text())
+        finally:
+            window.close()
+
+    def test_code_fence_segments(self) -> None:
+        from jmb.app.widgets import split_segments
+
+        parts = split_segments("""前面
+```python
+print(1)
+```
+后面""")
+        self.assertEqual([part[0] for part in parts], ["text", "code", "text"])
+        self.assertEqual(parts[1][2], "python")
+        self.assertIn("print(1)", parts[1][1])
+
     def test_pet_click_opens_chat_and_bubble_click_fires(self) -> None:
         try:
             from jmb.app.main import MainWindow
