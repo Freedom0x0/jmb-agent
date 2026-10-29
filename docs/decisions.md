@@ -867,7 +867,7 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 
 【实现】
 - 新 `theme.py`：色板/字体/圆角/圆形头像（Pillow 合成，避免 Tk 透明像素发黑）/ Windows 11 深色标题栏 + 圆角（DWM，属性实测 1/2）。
-- 新 `widgets.py`：`RoundedButton`（Canvas 圆角、hover/press/disabled）、`InputBar`（圆角槽 + Entry + 占位符随焦点/忙碌切换）、`ChatBubble`（按字符测量换行、圆角气泡）、`ChatView`（头像 + 名字 + 左右气泡 + meta 竖条 + 空状态 + 流式气泡 + 自绘细滚动条 + 鼠标滚轮）。
+- 新 `widgets.py`：`RoundedButton`（Canvas 圆角、hover/press/disabled）、`InputBar`（圆角槽 + Entry + 占位符随焦点/忙碌切换）、`ChatBubble`（按字符测量换行、圆角气泡）、`ChatView`（头像 + 名字 + 左右气泡 + meta 竖条 + 空状态 + 流式气泡 + 自绘细滚动条 + 鼠标滚轮；只在底部时自动跟随，翻旧消息不会被拽回）。
 - `main.py`：深墨底、头部头像/名字/在线副标题、「清单」+「···」按钮（替代原生菜单）、底部圆角输入 + 发送/撤销、状态栏 usage；保留 worker/授权弹窗/撤销/清单/压缩事件全部行为；气泡/系统行右键可复制，「···」菜单可复制最后一条回复。
 - `pet.py`：桌宠窗口加状态胶囊（江慕白 · 在线/在想/搜索中/工作中/出错）、hover 细环、点击回弹、右键菜单（打开聊天/今日清单/切换置顶/退出）、圆形奶油气泡（薄荷侧条 + 下指尾巴 + 点击回调）；拖动时气泡跟随。
 - 只在 UI 层改；`ChatSession`/工具/沙箱/记忆/压缩不动。

@@ -293,6 +293,7 @@ class ChatView(tk.Frame):
         self._stream_bubble = None
         self._stream_after = None
         self._stream_active = False
+        self._stream_stick = True
         self._typing_row = None
         self._avatar = theme.load_avatar(30, bg=theme.BG, master=self)
         self._empty = self._build_empty()
@@ -303,6 +304,13 @@ class ChatView(tk.Frame):
 
     def _on_wheel(self, event) -> None:
         self.canvas.yview_scroll(-int(event.delta / 120), "units")
+        self._stream_stick = self._at_bottom()
+
+    def _at_bottom(self) -> bool:
+        try:
+            return self.canvas.yview()[1] >= 0.97
+        except tk.TclError:
+            return True
 
     def _bubble_width(self) -> int:
         width = self.canvas.winfo_width()
@@ -381,12 +389,15 @@ class ChatView(tk.Frame):
         text = (text or "").rstrip()
         if not text:
             return
+        stick = role == "user" or self._at_bottom()
         row = self._row(text, role)
         self._messages.append({"role": role, "text": text, "row": row})
-        self._scroll_to_end()
+        if stick:
+            self._scroll_to_end()
 
     def begin_stream(self) -> None:
         self.show_typing(False)
+        self._stream_stick = self._at_bottom()
         self._stream_active = True
         self._stream_text = ""
         self._stream_row = None
@@ -415,7 +426,8 @@ class ChatView(tk.Frame):
             self._stream_bubble.set_text(self._stream_text)
             if self._messages and self._messages[-1].get("stream"):
                 self._messages[-1]["text"] = self._stream_text
-            self._scroll_to_end()
+            if self._stream_stick:
+                self._scroll_to_end()
 
     def end_stream(self) -> None:
         if self._stream_after is not None:
@@ -441,13 +453,15 @@ class ChatView(tk.Frame):
             return
         if self._typing_row is not None:
             return
+        stick = self._at_bottom()
         self._hide_empty()
         row = tk.Frame(self.inner, bg=theme.BG)
         row.pack(fill="x", pady=(2, 8))
         tk.Label(row, text="● 江慕白正在输入…", bg=theme.BG, fg=theme.MINT_DIM,
                  font=theme.FONT_TINY).pack(anchor="w", padx=(60, 18))
         self._typing_row = row
-        self._scroll_to_end()
+        if stick:
+            self._scroll_to_end()
 
     def _copy_text(self, text: str) -> None:
         self.clipboard_clear()
@@ -473,6 +487,7 @@ class ChatView(tk.Frame):
             message["row"].destroy()
         self._messages.clear()
         self._stream_active = False
+        self._stream_stick = True
         self._stream_text = ""
         self._stream_row = self._stream_bubble = None
         if self._empty is None:

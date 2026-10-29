@@ -173,9 +173,14 @@ class MainWindow(tk.Tk):
         self.header = tk.Label(header, text="江慕白", bg=BG, fg=TEXT, anchor="w",
                                font=("Microsoft YaHei UI", 13, "bold"))
         self.header.grid(row=0, column=1, sticky="w")
-        self.subtitle = tk.Label(header, text="jmb · 正在启动…", bg=BG, fg=MUTED,
+        subtitle_row = tk.Frame(header, bg=BG)
+        subtitle_row.grid(row=1, column=1, sticky="w")
+        dot = tk.Canvas(subtitle_row, width=7, height=7, bg=BG, highlightthickness=0)
+        dot.create_oval(1, 1, 6, 6, fill=theme.MINT, outline="")
+        dot.pack(side="left")
+        self.subtitle = tk.Label(subtitle_row, text="jmb · 正在启动…", bg=BG, fg=MUTED,
                                  anchor="w", font=theme.FONT_TINY)
-        self.subtitle.grid(row=1, column=1, sticky="w")
+        self.subtitle.pack(side="left", padx=(5, 0))
         self.brief_button = RoundedButton(header, "清单", command=self.show_brief,
                                           width=62, height=32, fill=theme.PANEL_2,
                                           fg=TEXT, hover=theme.BORDER,

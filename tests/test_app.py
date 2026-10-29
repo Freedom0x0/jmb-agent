@@ -132,6 +132,30 @@ class AppSmokeTest(unittest.TestCase):
         finally:
             window.close()
 
+    def test_chat_follows_only_when_at_bottom(self) -> None:
+        try:
+            from jmb.app.main import MainWindow
+
+            window = MainWindow(start_worker=False)
+        except tk.TclError:
+            self.skipTest("no display")
+        try:
+            window.withdraw()
+            window.pet.win.withdraw()
+            for index in range(14):
+                window.chat.append(f"第 {index} 条滚动测试消息，内容稍微长一点。", "assistant")
+            window.update()
+            window.chat.canvas.yview_moveto(0)
+            window.update()
+            window.chat.append("后台追加的助手消息", "assistant")
+            window.update()
+            self.assertLess(window.chat.canvas.yview()[1], 0.99)
+            window.chat.append("用户新消息", "user")
+            window.update()
+            self.assertGreater(window.chat.canvas.yview()[1], 0.97)
+        finally:
+            window.close()
+
     def test_pet_click_opens_chat_and_bubble_click_fires(self) -> None:
         try:
             from jmb.app.main import MainWindow
