@@ -48,6 +48,10 @@ class ChatWorker(threading.Thread):
                 "profile": self.session.profile.name,
                 "transcript": str(self.session.transcript_path),
             }))
+            try:
+                threading.Thread(target=self.session.warmup, daemon=True).start()
+            except Exception:  # noqa: BLE001
+                pass
             while True:
                 item = self.inbox.get()
                 if item is None:

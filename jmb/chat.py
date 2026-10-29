@@ -14,6 +14,7 @@ import datetime as _dt
 import json
 import os
 import sys
+import threading
 import uuid
 
 from . import brief, code, config, gate, grants, prefix, providers, search, seeds, webfetch
@@ -334,15 +335,14 @@ class ChatSession:
         self.code_session = code.CodeSession()
         self.count_fn = None
         self._count_client = None
+        self._count_lock = threading.Lock()
         if self.profile.protocol == "anthropic":
             def _count(system, tools, history):
-                if self._count_client is None:
-                    import anthropic  # 延迟加载：启动不必等这个 10s+ 的导入
-                    self._count_client = anthropic.Anthropic(
-                        base_url=self.profile.base_url,
-                        auth_token=config.resolve_token().value,
-                        timeout=120.0, max_retries=1)
-                return self._count_client.messages.count_tokens(
+                with self._count_lock:
+                    if self._count_client is None:
+                        self._load_count_client()
+                    client = self._count_client
+                return client.messages.count_tokens(
                     model=self.profile.model, system=system,
                     tools=tools, messages=history).input_tokens
             self.count_fn = _count
@@ -359,6 +359,24 @@ class ChatSession:
         self.last_input_tokens = 0
         self._compact_cooldown = 0
         self.closed = False
+
+    def _load_count_client(self) -> None:
+        import anthropic  # 延迟加载：启动不必等这个 10s+ 的导入
+        self._count_client = anthropic.Anthropic(
+            base_url=self.profile.base_url,
+            auth_token=config.resolve_token().value,
+            timeout=120.0, max_retries=1)
+
+    def warmup(self) -> None:
+        """ready 后后台预热 SDK，让第一条消息不用再等导入。"""
+        if self.profile.protocol != "anthropic" or not config.resolve_token().value:
+            return
+        try:
+            with self._count_lock:
+                if self._count_client is None:
+                    self._load_count_client()
+        except Exception:  # noqa: BLE001 —— 预热失败不影响首条消息自己的加载
+            pass
 
     def _should_compact(self) -> bool:
         return (self._compact_cooldown <= 0

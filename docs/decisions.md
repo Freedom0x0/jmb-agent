@@ -889,7 +889,7 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 - `ChatSession` 不再在初始化时导入 anthropic；`count_fn` 第一次真正需要计数时才导入并创建 client。
 - 测试里 worker 启动测试排到 UI 测试之前（Tk/PhotoImage 的跨线程清理会拖慢后续线程，这是测试隔离问题，不是产品路径）。
 
-【效果】全量 72 项测试 16s（之前 86s–335s）；app 窗口 ready 不再等 SDK 导入。代价：第一条消息仍要付一次导入（约 10s），之后正常；暂不做后台预热。
+【效果】全量 75 项测试约 20s；app 窗口 ready 不再等 SDK 导入；`ChatWorker` 在 ready 后起 daemon 线程预热 anthropic，首条消息通常不用再等（如果 ready 后立刻发送，仍可能与预热重叠）。
 
 【状态】✅ 已落地。
 
