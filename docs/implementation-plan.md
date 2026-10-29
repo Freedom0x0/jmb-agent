@@ -440,7 +440,7 @@ knowledge_dir = "context-forge"     # 保持默认 ⇒ CF 自己的产物收进 
 
 ## app 壳 + 内置桌宠渲染层（D33/D35，v1 已落地）
 
-**2026-10-29 v1**：`jmb app` = Tkinter 聊天窗口 + `PetWindow`（jmb 自有 `pet.json` + 8×9 spritesheet，Canvas 兜底）；和终端共用 `ChatSession`；GUI 授权走主窗口确认框；GUI 撤销按钮；关闭时记忆收尾确认；45 tests。PySide6 安装卡住，按 D33 回退 Tkinter；托盘/严格穿透/PySide6 仍待做。
+**2026-10-29 v1**：`jmb app` = Tkinter 聊天窗口 + `PetWindow`（jmb 自有 `pet.json` + 8×9 spritesheet，Canvas 兜底）；和终端共用 `ChatSession`；GUI 授权走主窗口确认框；GUI 撤销按钮/顶部菜单，撤销后向下一轮注入 `[系统事件]` 让模型知道；关闭时记忆收尾确认；46 tests。PySide6 安装卡住，按 D33 回退 Tkinter；托盘/严格穿透/PySide6 仍待做。
 
 **产品形状**：桌宠是 jmb 自己的一个窗口，不是外接 Petdex，也不是 sidecar；用户只装 jmb。
 

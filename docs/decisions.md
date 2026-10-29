@@ -764,11 +764,11 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 - 框架先 **Tkinter**（stdlib、零安装）。PySide6 在这台机器上安装卡住（下载/解包十几分钟未进 venv；磁盘 8.6GB、可用内存 0.53GB），按 D33 备选回退；PySide6 后换。
 - 渲染 v1：**jmb 自有 `pet.json` + 8×9 网格 spritesheet（192×208 帧）**，Pillow 加载、Canvas 兜底；idle/thinking/searching/working/failed/waving + 气泡 + 拖拽；暂未做托盘、严格点击穿透。
 - 授权：GUI 读/写/执行走 worker→主窗口 `messagebox` 回调（`grants.set_prompt_handler`），不再依赖 stdin。
-- 撤销：GUI 有「撤销」按钮，走同一 `ChatSession.undo`（代码整轮 / 自我改写）。
+- 撤销：GUI 有「撤销」按钮/顶部菜单，走同一 `ChatSession.undo`（代码整轮 / 自我改写）。撤销后会向**下一轮上下文**注入 `[系统事件]`：模型知道这次改动是用户撤的，之前的写入/编辑结果不再代表当前文件，需要重新 `read_code` 确认。
 - 记忆收尾：GUI 关闭时弹「全部记 / 全部不要」确认；不做逐条勾选。
 - 分支 `feat/app-shell-renderer` 合并了 `feat/code-search-sandbox`（#6），所以 app 里直接有 grep/find 和 Docker 沙箱。
 
-【验证】45 项测试通过：app smoke、sprite 加载、ChatWorker ready/stop、GUI permission handler、记忆 ask 回调、grep/find、沙箱/SSRF、code tools。
+【验证】46 项测试通过：app smoke、sprite 加载、ChatWorker ready/stop、GUI permission handler、记忆 ask 回调、撤销事件注入、grep/find、沙箱/SSRF、code tools。
 
 【已知短板】Tkinter 视觉/点击穿透弱；无托盘；PySide6 未装；记忆确认只有全记/全丢，不能逐条选；sprite 是 jmb 自有的占位形象（不是 Petdex 画廊素材）。
 

@@ -32,7 +32,7 @@
 
 **桌宠（D33）**：图上画的是原型形态（外接 Petdex）；发布形态是 **jmb 内置渲染层**（一个进程/一个产品），待实现。**Petdex 原型已清（2026-10-28）**，只留 `pet.json` / 网格 / state 的格式参考，不进发布路径。
 
-**app 壳（D35，2026-10-29）**：`jmb app` 提供 Tkinter 聊天窗口 + 内置 `PetWindow`（jmb 自有 `pet.json` + 8×9 spritesheet，Canvas 兜底）；终端 `jmb chat` 保留；两者共用 `ChatSession`。GUI 有授权确认、撤销按钮、关闭时记忆收尾确认。PySide6 因本机安装卡住/资源紧张回退 Tkinter，后续可换；托盘/严格点击穿透待做。
+**app 壳（D35，2026-10-29）**：`jmb app` 提供 Tkinter 聊天窗口 + 内置 `PetWindow`（jmb 自有 `pet.json` + 8×9 spritesheet，Canvas 兜底）；终端 `jmb chat` 保留；两者共用 `ChatSession`。GUI 有授权确认、撤销按钮/顶部菜单、关闭时记忆收尾确认。**撤销会向下一轮注入 `[系统事件]`**，模型知道改动是用户撤的，需重新 `read_code` 确认。PySide6 因本机安装卡住/资源紧张回退 Tkinter，后续可换；托盘/严格点击穿透待做。
 
 ---
 

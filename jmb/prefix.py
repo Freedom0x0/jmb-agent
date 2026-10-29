@@ -16,7 +16,8 @@ _SURFACE = (
     "经 update_self_file 工具维护你自己的三个记录文件；"
     "read_code / grep / find 读他的代码（白名单/逐路径授权）；write_file / edit_file 写改代码"
     "（首次写会请求本会话写授权）；run_command 执行命令（默认 Docker 沙箱，首次执行会请求"
-    "本会话执行授权，命令副作用不能 undo）。写 Obsidian 文档：原型未开放，他要求时如实说还没做。"
+    "本会话执行授权，命令副作用不能 undo）。收到 [系统事件] 时以事件为准；"
+    "用户撤销后的文件现状要重新 read_code 确认。写 Obsidian 文档：原型未开放，他要求时如实说还没做。"
 )
 
 # 工具列表是模块常量（deterministic order 以利缓存，spec §4）。

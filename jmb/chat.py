@@ -314,17 +314,22 @@ class ChatSession:
         self.transcript_path = config.sessions_dir() / f"{_dt.date.today().isoformat()}-{self.tid}.jsonl"
         self.log = self.transcript_path.open("a", encoding="utf-8")
         self.history: list[dict] = []
+        self.notes: list[str] = []
         self.closed = False
 
     def send(self, text: str) -> None:
         user = (text or "").strip()
         if not user:
             return
-        send_text = user
+        prefixes: list[str] = []
+        if self.notes:
+            prefixes.extend(self.notes)
+            self.notes.clear()
         if self.fact_memory:
             recalled = self.fact_memory.search(user)
             if recalled:
-                send_text = f"[记忆召回——他以前说过的事，可自然引用]\n{recalled}\n\n{user}"
+                prefixes.append(f"[记忆召回——他以前说过的事，可自然引用]\n{recalled}")
+        send_text = "\n\n".join([*prefixes, user]) if prefixes else user
         self.history.append({"role": "user", "content": send_text})
         self.log.write(json.dumps({"ts": _now(), "kind": "user", "text": user},
                                   ensure_ascii=False) + "\n")
@@ -341,7 +346,20 @@ class ChatSession:
             self.emit("turn_end", {"transcript": str(self.transcript_path)})
 
     def undo(self) -> str:
-        return self.code_session.undo_last_turn() or gate.undo()
+        message = self.code_session.undo_last_turn() or gate.undo()
+        if (message and "没有可撤" not in message
+                and "能撤的都撤过了" not in message
+                and "没有文件需要恢复" not in message):
+            note = ("[系统事件，不是用户发言] 用户刚撤销了最近一轮改动；以这条为准，"
+                    "之前工具结果里的写入/编辑不再代表当前文件。撤销结果：" + message)
+            self.notes.append(note)
+            try:
+                self.log.write(json.dumps({"ts": _now(), "kind": "undo",
+                                          "message": message}, ensure_ascii=False) + "\n")
+                self.log.flush()
+            except Exception:  # noqa: BLE001
+                pass
+        return message
 
     def confirm_pending(self, interactive: bool, ask=None) -> str:
         return (self.fact_memory.confirm_pending(interactive=interactive, ask=ask)
