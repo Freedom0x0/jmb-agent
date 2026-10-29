@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import tkinter as tk
@@ -126,6 +127,12 @@ class ChatWorker(threading.Thread):
 class MainWindow(tk.Tk):
     def __init__(self, start_worker: bool = True) -> None:
         super().__init__()
+        self._persist = bool(start_worker)
+        if self._persist:
+            try:
+                self.attributes("-alpha", 0.0)
+            except tk.TclError:
+                pass
         self.title("江慕白 · jmb")
         self.geometry("900x680+140+80")
         self.minsize(720, 560)
@@ -134,6 +141,7 @@ class MainWindow(tk.Tk):
         self._closing = False
         self._destroyed = False
         self._poll_id: str | None = None
+        self._titlebar_id: str | None = None
         self.worker: ChatWorker | None = None
         self.pet = PetWindow(self)
         self.pet.on_click = self._show_chat
@@ -147,7 +155,10 @@ class MainWindow(tk.Tk):
             pass
         self.update_idletasks()
         theme.enable_dark_titlebar(self)
-        self.after(120, self._apply_dark_titlebar)
+        self._titlebar_id = self.after(120, self._apply_dark_titlebar)
+        if self._persist:
+            self._restore_ui_state()
+            self.after(30, self._fade_in)
         if start_worker:
             self._start_worker()
         else:
@@ -235,6 +246,54 @@ class MainWindow(tk.Tk):
     def _apply_dark_titlebar(self) -> None:
         if not self._destroyed:
             theme.enable_dark_titlebar(self)
+
+    def _fade_in(self, value: float = 0.0) -> None:
+        if self._destroyed:
+            return
+        value = min(1.0, value + 0.18)
+        try:
+            self.attributes("-alpha", value)
+        except tk.TclError:
+            return
+        if value < 1.0:
+            self.after(16, lambda: self._fade_in(value))
+
+    def _ui_state_path(self):
+        return config.jmb_home() / "state" / "ui.json"
+
+    def _restore_ui_state(self) -> None:
+        try:
+            data = json.loads(self._ui_state_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        chat = data.get("chat")
+        if isinstance(chat, str):
+            match = re.match(r"^(\d{3,4})x(\d{3,4})([+-]\d+)([+-]\d+)$", chat)
+            if match:
+                width, height, x, y = (int(match.group(i)) for i in range(1, 5))
+                screen_w, screen_h = self.winfo_screenwidth(), self.winfo_screenheight()
+                if (720 <= width <= screen_w and 560 <= height <= screen_h
+                        and -width + 100 <= x <= screen_w - 100
+                        and -height + 100 <= y <= screen_h - 100):
+                    self.geometry(chat)
+        pet = data.get("pet")
+        if isinstance(pet, list) and len(pet) == 2:
+            try:
+                self.pet.move_to(int(pet[0]), int(pet[1]))
+            except (TypeError, ValueError):
+                pass
+
+    def _save_ui_state(self) -> None:
+        chat = (f"{self.winfo_width()}x{self.winfo_height()}"
+                f"+{self.winfo_x()}+{self.winfo_y()}")
+        state = {"chat": chat,
+                 "pet": [self.pet.win.winfo_x(), self.pet.win.winfo_y()]}
+        try:
+            path = self._ui_state_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
 
     def _show_menu(self) -> None:
         menu = tk.Menu(self, tearoff=0, bg=theme.PANEL, fg=TEXT,
@@ -485,6 +544,8 @@ class MainWindow(tk.Tk):
     def _finish_close(self) -> None:
         if self._destroyed:
             return
+        if self._persist:
+            self._save_ui_state()
         self._destroyed = True
         if self._poll_id is not None:
             try:
@@ -494,6 +555,11 @@ class MainWindow(tk.Tk):
         if self._brief_id is not None:
             try:
                 self.after_cancel(self._brief_id)
+            except tk.TclError:
+                pass
+        if self._titlebar_id is not None:
+            try:
+                self.after_cancel(self._titlebar_id)
             except tk.TclError:
                 pass
         self.pet.close()

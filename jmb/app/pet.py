@@ -221,6 +221,13 @@ class PetWindow:
         self.win.geometry(
             f"{self.width}x{self.height}+{sw - self.width - 48}+{sh - self.height - 90}")
 
+    def move_to(self, x: int, y: int) -> None:
+        screen_w = self.win.winfo_screenwidth()
+        screen_h = self.win.winfo_screenheight()
+        x = max(-self.width + 90, min(int(x), screen_w - 90))
+        y = max(0, min(int(y), screen_h - 60))
+        self.win.geometry(f"+{x}+{y}")
+
     def _draw(self) -> None:
         canvas = self.canvas
         canvas.delete("all")

@@ -189,6 +189,43 @@ print(1)
         self.assertEqual(parts[1][2], "python")
         self.assertIn("print(1)", parts[1][1])
 
+    def test_ui_state_roundtrip(self) -> None:
+        import os
+        import tempfile
+        from pathlib import Path
+
+        old = os.environ.get("JMB_HOME")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["JMB_HOME"] = str(Path(tmp) / "home")
+            try:
+                try:
+                    from jmb.app.main import MainWindow
+
+                    first = MainWindow(start_worker=False)
+                    second = MainWindow(start_worker=False)
+                except tk.TclError:
+                    self.skipTest("no display")
+                try:
+                    first._persist = True
+                    first.geometry("900x680+200+150")
+                    first.pet.move_to(300, 200)
+                    first.update()
+                    first._save_ui_state()
+                    first.close()
+                    second._persist = True
+                    second._restore_ui_state()
+                    second.update()
+                    self.assertEqual(second.geometry(), "900x680+200+150")
+                    self.assertEqual(
+                        (second.pet.win.winfo_x(), second.pet.win.winfo_y()), (300, 200))
+                finally:
+                    second.close()
+            finally:
+                if old is None:
+                    os.environ.pop("JMB_HOME", None)
+                else:
+                    os.environ["JMB_HOME"] = old
+
     def test_pet_click_opens_chat_and_bubble_click_fires(self) -> None:
         try:
             from jmb.app.main import MainWindow
