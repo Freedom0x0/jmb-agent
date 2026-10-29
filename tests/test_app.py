@@ -32,6 +32,29 @@ class AppSmokeTest(unittest.TestCase):
         finally:
             root.destroy()
 
+    def test_pet_bubble_clamps_to_screen_edge(self) -> None:
+        try:
+            root = tk.Tk()
+        except tk.TclError:
+            self.skipTest("no display")
+        root.withdraw()
+        try:
+            from jmb.app.pet import BubbleWindow
+
+            bubble = BubbleWindow(root)
+            screen_w = bubble.win.winfo_screenwidth()
+            bubble.show("clamp", screen_w + 200, 300, 1000)
+            bubble.win.update_idletasks()
+            width = bubble._size[0]
+            self.assertGreaterEqual(bubble.win.winfo_x(), 0)
+            self.assertLessEqual(bubble.win.winfo_x() + width, screen_w)
+            bubble.move(screen_w + 200, 300)
+            bubble.win.update_idletasks()
+            self.assertLessEqual(bubble.win.winfo_x() + width, screen_w)
+            bubble.close()
+        finally:
+            root.destroy()
+
     def test_main_window_builds_without_worker(self) -> None:
         try:
             from jmb.app.main import MainWindow

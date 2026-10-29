@@ -124,7 +124,7 @@ class BubbleWindow:
         self.canvas.create_text(pad_x + 6, pad_y + name_h, anchor="nw",
                                 text=chr(10).join(lines),
                                 fill=BUBBLE_TEXT, font=self._font)
-        x = max(0, anchor_x - width // 2)
+        x = self._clamp_x(anchor_x - width // 2, width)
         y = max(0, anchor_y - total_h)
         self.win.geometry(f"{width}x{total_h}+{x}+{y}")
         self._size = (width, total_h)
@@ -134,9 +134,13 @@ class BubbleWindow:
             self.win.after_cancel(self._after)
         self._after = self.win.after(max(1000, milliseconds), self.win.withdraw)
 
+    def _clamp_x(self, x: int, width: int) -> int:
+        screen_w = self.win.winfo_screenwidth()
+        return min(max(0, int(x)), max(0, screen_w - width))
+
     def move(self, anchor_x: int, anchor_y: int) -> None:
         width, height = self._size
-        x = max(0, anchor_x - width // 2)
+        x = self._clamp_x(anchor_x - width // 2, width)
         y = max(0, anchor_y - height)
         self.win.geometry(f"+{x}+{y}")
 
