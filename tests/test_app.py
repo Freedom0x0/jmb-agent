@@ -120,15 +120,22 @@ class AppSmokeTest(unittest.TestCase):
         try:
             window.withdraw()
             window.pet.win.withdraw()
+            from types import SimpleNamespace
+
             self.assertEqual(window.input.get(), "")
             self.assertIn("说点什么", window.entry.get())
             window.input.focus_set()
-            self.assertEqual(window.entry.get(), "")
+            self.assertIn("说点什么", window.entry.get())
+            window.input._on_key(SimpleNamespace(keysym="a"))
+            window.entry.insert(0, "a")
+            self.assertEqual(window.input.get(), "a")
+            window.input.clear()
             window.input.set_state("disabled")
             self.assertEqual(window.input.get(), "")
             self.assertIn("正在回复", window.entry.get())
             window.input.set_state("normal")
-            self.assertIn(window.entry.get(), ("", "和江慕白说点什么…"))
+            self.assertEqual(window.input.get(), "")
+            self.assertIn("说点什么", window.entry.get())
         finally:
             window.close()
 

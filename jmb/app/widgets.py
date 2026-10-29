@@ -80,6 +80,11 @@ class RoundedButton(tk.Canvas):
         self._draw()
 
 
+_NON_TEXT_KEYS = {"Return", "KP_Enter", "Tab", "Escape", "Shift_L", "Shift_R",
+                  "Control_L", "Control_R", "Alt_L", "Alt_R", "Left", "Right",
+                  "Home", "End", "Up", "Down"}
+
+
 class InputBar(tk.Frame):
     """圆角输入槽：Canvas 画底，Entry 嵌在里面；placeholder 直接放 Entry 里。"""
 
@@ -100,6 +105,7 @@ class InputBar(tk.Frame):
         self.canvas.bind("<Button-1>", lambda _e: self.entry.focus_set())
         self.entry.bind("<FocusIn>", self._focus_in)
         self.entry.bind("<FocusOut>", self._focus_out)
+        self.entry.bind("<KeyPress>", self._on_key)
         if on_return is not None:
             self.entry.bind("<Return>", lambda _e: on_return())
         self._show_placeholder()
@@ -117,10 +123,17 @@ class InputBar(tk.Frame):
         self._showing_placeholder = True
 
     def _focus_in(self, _event=None) -> None:
-        if self._showing_placeholder:
-            self.entry.delete(0, "end")
-            self.entry.config(fg=theme.TEXT)
-            self._showing_placeholder = False
+        if not self.entry.get():
+            self._show_placeholder()
+
+    def _on_key(self, event) -> None:
+        if not self._showing_placeholder:
+            return
+        if event.keysym in _NON_TEXT_KEYS:
+            return
+        self.entry.delete(0, "end")
+        self.entry.config(fg=theme.TEXT)
+        self._showing_placeholder = False
 
     def _focus_out(self, _event=None) -> None:
         if not self.entry.get():
@@ -153,7 +166,7 @@ class InputBar(tk.Frame):
         if placeholder:
             self._placeholder = placeholder
         if state == "disabled":
-            if not self._showing_placeholder and not self.entry.get():
+            if not self.entry.get() or self._showing_placeholder:
                 self._show_placeholder("江慕白正在回复…")
             self.entry.config(state="disabled")
         else:
@@ -161,14 +174,15 @@ class InputBar(tk.Frame):
             if self._showing_placeholder:
                 self.entry.delete(0, "end")
                 self._showing_placeholder = False
-            if not self.entry.get() and self.entry.focus_get() is not self.entry:
+            if not self.entry.get():
                 self._show_placeholder()
             self.entry.config(fg=theme.TEXT if not self._showing_placeholder else theme.MUTED)
         self._layout()
 
     def focus_set(self) -> None:
         self.entry.focus_set()
-        self._focus_in()
+        if not self.entry.get():
+            self._show_placeholder()
 
 
 _FENCE_RE = re.compile(r"```([^\n]*)\n(.*?)(?:```|$)", re.S)

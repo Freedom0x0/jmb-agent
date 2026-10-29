@@ -429,7 +429,7 @@ class MainWindow(tk.Tk):
     def _on_event(self, kind: str, data) -> None:
         if kind == "ready":
             self.header.config(text="江慕白")
-            self.subtitle.config(text=f"jmb · {data.get('profile', '')} · 在线")
+            self.subtitle.config(text="jmb · 本地会话 · 在线")
             self.status.config(text="在线 · 本地会话")
             self.usage_label.config(text="")
             self.pet.set_state("idle")
