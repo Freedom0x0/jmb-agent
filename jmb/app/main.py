@@ -203,7 +203,9 @@ class MainWindow(tk.Tk):
                                          font=theme.FONT, radius=12)
         self.more_button.grid(row=0, column=3, rowspan=2, padx=(6, 0))
 
-        tk.Frame(self, bg=theme.BORDER, height=1).grid(row=1, column=0, sticky="ew")
+        self._sep = tk.Canvas(self, height=2, bg=BG, highlightthickness=0)
+        self._sep.grid(row=1, column=0, sticky="ew")
+        self._sep.bind("<Configure>", self._draw_separator)
 
         self.chat = ChatView(self)
         self.chat.grid(row=2, column=0, sticky="nsew", padx=8)
@@ -242,6 +244,14 @@ class MainWindow(tk.Tk):
         self.clipboard_clear()
         self.clipboard_append(text)
         self.status.config(text="已复制最后一条")
+
+    def _draw_separator(self, event=None) -> None:
+        canvas = self._sep
+        width = event.width if event is not None else canvas.winfo_width()
+        canvas.delete("all")
+        canvas.create_line(0, 1, width, 1, fill=theme.BORDER)
+        canvas.create_line(20, 1, min(width - 20, 82), 1,
+                           fill=theme.MINT_DIM, width=2)
 
     def _apply_dark_titlebar(self) -> None:
         if not self._destroyed:

@@ -105,8 +105,9 @@ class BubbleWindow:
         text_w = max((self._measure.measure(line) for line in lines), default=0)
         line_h = self._measure.metrics("linespace") + 3
         pad_x, pad_y = 14, 11
+        name_h = 15
         width = max(160, min(320, text_w + pad_x * 2 + 14))
-        height = max(42, len(lines) * line_h + pad_y * 2)
+        height = max(52, len(lines) * line_h + pad_y * 2 + name_h)
         total_h = height + 9
         self.canvas.configure(width=width, height=total_h)
         self.canvas.delete("all")
@@ -118,7 +119,10 @@ class BubbleWindow:
                                    fill=BUBBLE_BG, outline="")
         theme.round_rect(self.canvas, 0, 0, 4, height, 2,
                          fill=theme.MINT, outline="")
-        self.canvas.create_text(pad_x + 6, pad_y, anchor="nw", text="\n".join(lines),
+        self.canvas.create_text(pad_x + 6, 6, anchor="nw", text="江慕白",
+                                fill="#2f7c70", font=theme.FONT_TINY)
+        self.canvas.create_text(pad_x + 6, pad_y + name_h, anchor="nw",
+                                text=chr(10).join(lines),
                                 fill=BUBBLE_TEXT, font=self._font)
         x = max(0, anchor_x - width // 2)
         y = max(0, anchor_y - total_h)
