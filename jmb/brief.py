@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import difflib
+import http.client
 import json
 import re
 import subprocess
@@ -153,7 +154,11 @@ def _save_cooldown(shown: dict[str, str]) -> None:
 def _fetch_text(url: str, timeout: int = 25) -> str:
     request = urllib.request.Request(url, headers=_EVENT_UA)
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read().decode("utf-8", "replace")
+        try:
+            data = response.read()
+        except http.client.IncompleteRead as exc:  # 长页面会被截断；用已收到的部分
+            data = exc.partial
+    return data.decode("utf-8", "replace")
 
 
 def _fetch_hdx(url: str) -> tuple[str, bool]:
