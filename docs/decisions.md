@@ -40,6 +40,7 @@
 | D33 | 桌宠渲染层内置 jmb，不用 Petdex 外接/sidecar | ✅ 方向已定，实现后做 |
 | D34 | 写代码：任意路径 / 本会话授权 / 按轮次 undo | ✅（2026-10-28 他定的） |
 | D35 | app 壳 v1 = Tkinter 聊天窗口 + 内置桌宠；PySide6 后换 | ✅ v1 已落地，待验收 |
+| D36 | 每日清单投递面（app 菜单 + 一次性气泡）+ 定时任务壳修复 | ✅ 已落地，待验收 |
 
 > ⚠️ **日期标签更正**：本文件与 `docs/research/*.md` 里所有写着"2026-10-13"的条目，**实际都产出于 2026-10-26**（10-13 是我一开始误抄的日期，一路沿用到 D24）。内容和数字本身不受影响，但别拿"10-13"当时间线索引。新条目一律标 10-26。
 
@@ -773,6 +774,24 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 【已知短板】Tkinter 视觉/点击穿透弱；无托盘；PySide6 未装；记忆确认只有全记/全丢，不能逐条选；sprite 是 jmb 自有的占位形象（不是 Petdex 画廊素材）。
 
 【状态】✅ v1 已落地，待验收；PySide6/真实 sprite 后续。
+
+---
+
+## D36 每日清单的投递面 + 定时任务壳修复 ✅（2026-10-29）
+
+【背景】Petdex 随 D33 清掉后，`brief.py` 的冒泡调用点没了：10:00 任务即使跑成功也没有任何可见提示。2026-10-29 那次实际是**跑了但失败**（`LastTaskResult=2`，没有生成 `brief-2026-10-29`）：`scripts/brief-task.cmd` 存成 UTF-8 且在 `rem` 注释里写中文，cmd.exe 按 OEM 代码页把批处理切坏（手跑时能看到 `'（schtasks' 不是内部或外部命令`），计划任务下直接退出 2，没跑到 uv。
+
+【决定】
+- 任务壳改为**纯 ASCII + CRLF**；stdout/stderr 追加到 `%LOCALAPPDATA%\jmb\logs\brief-task.log`，start/exit 码显式落日志；计划任务动作改为 `cmd.exe /c "…\brief-task.cmd"`。
+- 任务设置只改两条：`DisallowStartIfOnBatteries=false`、`StopIfGoingOnBatteries=false`（用电池也跑）。**不动 D30 的"不补跑"**：`StartWhenAvailable` 保持 false，不挂 ONLOGON/ONSTART。
+- 投递面：app 壳每 60 秒检查今天的 `brief-YYYY-MM-DD.json`，有新的就冒一次桌宠气泡并写 `brief-seen.json`（同一天不重复）；菜单「文件 → 今日清单」用默认程序打开 md，没有文件时气泡说明。
+- app 没开就没有实时推送；下次打开 app 会对当天已生成的清单补一次气泡（只是提醒，不重跑数据）。
+
+【代价】10:00 的实时推送依赖 app 常驻；真正常驻推送等托盘/开机自启（二期）。
+
+【验证】计划任务 `schtasks /run` 后 `LastTaskResult=0`，日志出现 `[brief-task] start/exit 0`；47 项测试通过（新增「清单气泡只冒一次」）。
+
+【状态】✅ 已落地，待验收。
 
 ---
 

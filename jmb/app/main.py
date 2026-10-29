@@ -1,13 +1,17 @@
 """jmb 桌面 app 壳（Tkinter）：聊天窗口 + 内置桌宠事件流。"""
 from __future__ import annotations
 
+import json
+import os
 import queue
 import sys
 import threading
 import tkinter as tk
 import uuid
+from datetime import date
 from tkinter import messagebox
 
+from .. import config
 from .pet import PetWindow
 
 BG = "#1e1f22"
@@ -133,6 +137,9 @@ class MainWindow(tk.Tk):
         self.pet = PetWindow(self)
         self._build_ui()
         menubar = tk.Menu(self)
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="今日清单", command=self.show_brief)
+        menubar.add_cascade(label="文件", menu=file_menu)
         edit_menu = tk.Menu(menubar, tearoff=0)
         edit_menu.add_command(label="撤销", command=self.undo)
         menubar.add_cascade(label="编辑", menu=edit_menu)
@@ -147,6 +154,7 @@ class MainWindow(tk.Tk):
             self.undo_button.config(state="normal")
         self.protocol("WM_DELETE_WINDOW", self.close)
         self._poll_id = self.after(50, self._poll)
+        self._brief_id: str | None = self.after(1500, self._check_brief_loop)
 
     def _build_ui(self) -> None:
         self.grid_columnconfigure(0, weight=1)
@@ -231,6 +239,55 @@ class MainWindow(tk.Tk):
             return
         self.undo_button.config(state="disabled")
         self.worker.undo()
+
+    def _brief_paths(self) -> tuple:
+        today = date.today()
+        return (config.brief_state_path(today),
+                config.jmb_home() / "state" / f"brief-{today.isoformat()}.md",
+                config.jmb_home() / "state" / "brief-seen.json")
+
+    def _check_brief_loop(self) -> None:
+        if self._destroyed:
+            return
+        try:
+            self._check_brief()
+        except OSError:
+            pass
+        self._brief_id = self.after(60_000, self._check_brief_loop)
+
+    def _check_brief(self) -> None:
+        state, _md, seen_path = self._brief_paths()
+        if not state.exists():
+            return
+        seen: dict = {}
+        if seen_path.exists():
+            try:
+                seen = json.loads(seen_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                seen = {}
+        mtime = state.stat().st_mtime
+        if seen.get("file") == state.name and seen.get("mtime") == mtime:
+            return
+        self.pet.bubble("今天的清单好了：菜单 文件 → 今日清单。", 7000)
+        try:
+            seen_path.parent.mkdir(parents=True, exist_ok=True)
+            seen_path.write_text(json.dumps({"file": state.name, "mtime": mtime}),
+                                 encoding="utf-8")
+        except OSError:
+            pass
+
+    def show_brief(self) -> None:
+        _state, md, _seen = self._brief_paths()
+        if not md.exists():
+            self.pet.bubble("今天还没有清单（10:00 那次没跑成，或还没到点）。", 5000)
+            return
+        if hasattr(os, "startfile"):
+            try:
+                os.startfile(str(md))
+                return
+            except OSError:
+                pass
+        self._append("\n[今日清单]\n" + md.read_text(encoding="utf-8") + "\n", "meta")
 
     def _poll(self) -> None:
         try:
