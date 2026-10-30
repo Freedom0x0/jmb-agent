@@ -501,6 +501,11 @@ def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log
             return last_usage  # 空轮次不进历史，避免下次请求 400
         history.append({"role": "assistant", "content": turn.blocks})
 
+        if turn.stop_reason == "max_tokens":
+            limit = getattr(profile, "max_output_tokens", 0)
+            suffix = f"（上限 {limit} tokens）" if limit else ""
+            emit("warning", f"回复达到输出上限{suffix}，已被截断；发「继续」让它接着说。")
+
         if turn.stop_reason != "tool_use":
             return last_usage
 

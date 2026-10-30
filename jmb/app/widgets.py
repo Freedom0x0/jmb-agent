@@ -214,6 +214,33 @@ def split_segments(text: str) -> list[tuple[str, str, str]]:
     return parts or [("text", text, "")]
 
 
+def inline_chars(line: str) -> list[tuple[str, str]]:
+    """把一行拆成 (字, 样式)；只认 **粗体** 与 `行内代码`，未闭合时按到行尾算。"""
+    chars: list[tuple[str, str]] = []
+    bold = False
+    index = 0
+    while index < len(line):
+        if line.startswith("**", index):
+            bold = not bold
+            index += 2
+            continue
+        if line[index] == "`":
+            end = line.find("`", index + 1)
+            if end == -1:
+                chars.extend((char, "code") for char in line[index + 1:])
+                break
+            chars.extend((char, "code") for char in line[index + 1:end])
+            index = end + 1
+            continue
+        chars.append((line[index], "bold" if bold else "normal"))
+        index += 1
+    return chars
+
+
+def display_line(line: str) -> str:
+    return "• " + line[2:] if line.startswith("- ") else line
+
+
 class CodeBubble(tk.Canvas):
     MAX_LINES = 22
 
@@ -285,6 +312,11 @@ class ChatBubble(tk.Canvas):
         self._text = ""
         self._max_width = max_width
         self._font = tkfont.Font(root=self, font=theme.FONT)
+        self._fonts = {
+            "normal": self._font,
+            "bold": tkfont.Font(root=self, font=(theme.FONT[0], theme.FONT[1], "bold")),
+            "code": tkfont.Font(root=self, font=theme.FONT_MONO),
+        }
         self._pad_x, self._pad_y = 15, 11
         self.bind("<Button-3>", self._copy_menu)
         self.set_text(text)
@@ -293,16 +325,29 @@ class ChatBubble(tk.Canvas):
         self._text = text
         fill, fg, outline = COLORS.get(self._role, COLORS["assistant"])
         line_height = self._font.metrics("linespace") + 3
-        lines = self._wrap(text)
-        text_width = max((self._font.measure(line) for line in lines), default=0)
-        width = min(self._max_width, max(72, text_width + self._pad_x * 2))
+        lines = self._lines(text)
+        widths = [sum(self._fonts[style].measure(char) for char, style in line)
+                  for line in lines]
+        width = min(self._max_width, max(72, int(max(widths, default=0)) + self._pad_x * 2))
         height = max(38, len(lines) * line_height + self._pad_y * 2)
         self.configure(width=width, height=height)
         self.delete("all")
         theme.round_rect(self, 1, 1, width - 1, height - 1, 16,
                          fill=fill, outline=outline)
-        self.create_text(self._pad_x, self._pad_y, anchor="nw", text="\n".join(lines),
-                         fill=fg, font=theme.FONT)
+        for index, line in enumerate(lines):
+            x = self._pad_x
+            y = self._pad_y + index * line_height
+            runs: list[list] = []
+            for char, style in line:
+                if runs and runs[-1][1] == style:
+                    runs[-1][0] += char
+                else:
+                    runs.append([char, style])
+            for run, style in runs:
+                self.create_text(x, y, anchor="nw", text=run,
+                                 fill=theme.MINT if style == "code" else fg,
+                                 font=self._fonts[style])
+                x += self._fonts[style].measure(run)
 
     def _copy_menu(self, event) -> None:
         menu = tk.Menu(self, tearoff=0, bg=theme.PANEL, fg=theme.TEXT,
@@ -317,18 +362,25 @@ class ChatBubble(tk.Canvas):
         self.clipboard_clear()
         self.clipboard_append(self._text)
 
-    def _wrap(self, text: str) -> list[str]:
-        lines: list[str] = []
+    def _lines(self, text: str) -> list[list[tuple[str, str]]]:
+        limit = self._max_width - self._pad_x * 2
+        lines: list[list[tuple[str, str]]] = []
         for paragraph in (text or "").splitlines() or [""]:
-            current = ""
-            for char in paragraph:
-                if self._font.measure(current + char) <= self._max_width - self._pad_x * 2:
-                    current += char
-                else:
+            chars = inline_chars(display_line(paragraph))
+            if not chars:
+                lines.append([])
+                continue
+            current: list[tuple[str, str]] = []
+            width = 0
+            for char, style in chars:
+                char_width = self._fonts[style].measure(char)
+                if current and width + char_width > limit:
                     lines.append(current)
-                    current = char
+                    current, width = [], 0
+                current.append((char, style))
+                width += char_width
             lines.append(current)
-        return lines or [""]
+        return lines or [[]]
 
 
 class ScrollThumb(tk.Canvas):

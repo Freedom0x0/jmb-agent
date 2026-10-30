@@ -29,6 +29,7 @@ class ProviderProfile:
     allow_thinking_drop: bool = True       # 预算闸门能不能丢老轮次的 thinking 块
     context_window: int = 128_000          # 模型窗口；预算按它算，不写死 30k
     input_budget: int = 30_000             # 软预算（system+tools+history）
+    max_output_tokens: int = 8192          # 单次回复上限；thinking 也算在里面
 
 
 def budget_for_model(model: str) -> tuple[int, int]:
@@ -62,7 +63,8 @@ def load_profile() -> ProviderProfile:
             os.environ.get("JMB_OPENAI_BASE_URL", "https://api.openai.com/v1"),
             os.environ.get("JMB_OPENAI_MODEL", "gpt-4o-mini"),
             context_window=_env_positive("JMB_CONTEXT_WINDOW") or window,
-            input_budget=_env_positive("JMB_INPUT_BUDGET") or budget)
+            input_budget=_env_positive("JMB_INPUT_BUDGET") or budget,
+            max_output_tokens=_env_positive("JMB_MAX_OUTPUT_TOKENS") or 8192)
     if name == "openai-mock":
         window, budget = budget_for_model(os.environ.get("JMB_OPENAI_MODEL", "mock-model"))
         return ProviderProfile(
@@ -70,7 +72,8 @@ def load_profile() -> ProviderProfile:
             os.environ.get("JMB_OPENAI_BASE_URL", "http://127.0.0.1:8791/v1"),
             os.environ.get("JMB_OPENAI_MODEL", "mock-model"),
             context_window=_env_positive("JMB_CONTEXT_WINDOW") or window,
-            input_budget=_env_positive("JMB_INPUT_BUDGET") or budget)
+            input_budget=_env_positive("JMB_INPUT_BUDGET") or budget,
+            max_output_tokens=_env_positive("JMB_MAX_OUTPUT_TOKENS") or 8192)
     # 默认：当前在用的这条线路（DeepSeek 的 Anthropic 兼容端点）
     model = config.resolve_model().value
     window, budget = budget_for_model(model)
@@ -79,7 +82,8 @@ def load_profile() -> ProviderProfile:
         config.resolve_base_url().value, model,
         supports_server_web_search=True, echo_thinking_required=False, allow_thinking_drop=True,
         context_window=_env_positive("JMB_CONTEXT_WINDOW") or window,
-        input_budget=_env_positive("JMB_INPUT_BUDGET") or budget)
+        input_budget=_env_positive("JMB_INPUT_BUDGET") or budget,
+        max_output_tokens=_env_positive("JMB_MAX_OUTPUT_TOKENS") or 8192)
 
 
 # ---- 线路一：Anthropic 协议 ----
@@ -93,7 +97,8 @@ def _anthropic_turn(profile: ProviderProfile, system: str, tools: list,
         raise RuntimeError("没有模型凭据（jmb doctor 看 token 行）")
     client = anthropic.Anthropic(base_url=profile.base_url, auth_token=token.value,
                                  timeout=300.0, max_retries=2)
-    with client.messages.stream(model=profile.model, max_tokens=2048, system=system,
+    with client.messages.stream(model=profile.model,
+                                max_tokens=profile.max_output_tokens, system=system,
                                 tools=tools, messages=history, timeout=300.0) as stream:
         for event in stream:
             if event.type == "content_block_start":

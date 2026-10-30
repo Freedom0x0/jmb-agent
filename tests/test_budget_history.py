@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from unittest import mock
 
@@ -42,6 +43,25 @@ class BudgetHistoryTest(unittest.TestCase):
             chat._stream_turn(None, None, "", [], history, mock.Mock(), None, None,
                               lambda kind, data: None)
         self.assertEqual(history, [{"role": "user", "content": "hi"}])
+
+    def test_max_output_tokens_env_override(self) -> None:
+        with mock.patch.dict(os.environ, {"JMB_MAX_OUTPUT_TOKENS": "16384"}):
+            self.assertEqual(providers.load_profile().max_output_tokens, 16384)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("JMB_MAX_OUTPUT_TOKENS", None)
+            self.assertEqual(providers.load_profile().max_output_tokens, 8192)
+
+    def test_max_tokens_emits_truncation_warning(self) -> None:
+        events: list[tuple[str, object]] = []
+        turn = providers.Turn(blocks=[{"type": "text", "text": "半句话"}],
+                              usage={"output": 8192}, stop_reason="max_tokens")
+        profile = providers.ProviderProfile("t", "anthropic", "http://x", "m")
+        with mock.patch("jmb.chat.providers.stream_turn", return_value=turn):
+            chat._stream_turn(profile, None, "", [],
+                              [{"role": "user", "content": "hi"}], mock.Mock(), None, None,
+                              lambda kind, data: events.append((kind, data)))
+        self.assertTrue(any(kind == "warning" and "截断" in str(data)
+                            for kind, data in events))
 
     def test_empty_tool_results_are_not_appended(self) -> None:
         history = [{"role": "user", "content": "hi"}]

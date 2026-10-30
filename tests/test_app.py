@@ -207,6 +207,30 @@ print(1)
         finally:
             window.close()
 
+    def test_markdown_bold_and_inline_code(self) -> None:
+        try:
+            root = tk.Tk()
+        except tk.TclError:
+            self.skipTest("no display")
+        root.withdraw()
+        try:
+            from jmb.app.widgets import ChatBubble
+
+            bubble = ChatBubble(root, "- **重点**和 `code`\n未闭合 **粗体", "assistant")
+            bubble.update_idletasks()
+            texts = [bubble.itemcget(item, "text") for item in bubble.find_all()
+                     if bubble.type(item) == "text"]
+            joined = "".join(texts)
+            self.assertNotIn("**", joined)
+            self.assertNotIn("`", joined)
+            self.assertIn("重点", joined)
+            self.assertIn("code", joined)
+            self.assertIn("•", joined)
+            self.assertIn("粗体", joined)
+            bubble.destroy()
+        finally:
+            root.destroy()
+
     def test_code_fence_segments(self) -> None:
         from jmb.app.widgets import split_segments
 
