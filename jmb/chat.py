@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import re
 import sys
 import threading
 import uuid
@@ -20,6 +21,49 @@ import uuid
 from . import brief, code, config, gate, grants, prefix, providers, search, seeds, webfetch
 
 INPUT_BUDGET = 30000  # spec §5.6 客户端闸门；跑一周后按 usage 重定
+
+# 身份问答走本地兜底：底层模型的自我认知训练很强，单靠 system prompt
+# 仍会回答“我是 XXX 模型”（2026-10-30 实测）。直接问身份时不发模型。
+_IDENTITY_RE = re.compile(
+    r"(你是谁|你叫什么|你的名字|介绍.{0,4}你自己|自我介绍|"
+    r"你是什么模型|你用的什么模型|你的模型是什么|你是哪种模型|你是哪个模型|你是哪家模型|"
+    r"你是\s*AI|你是不是\s*AI|你是人工智能|你是机器人|你是真人|你是语言模型|"
+    r"你到底是什么|你究竟是谁|你是谁做的|谁开发了你|谁做的你|你从哪来|"
+    r"你的?(soul|人设)|你.*(系统提示|提示词)|"
+    r"你是.{0,8}(GPT|Claude|DeepSeek|讯飞|星火|Spark|X2))",
+    re.I,
+)
+_IDENTITY_HINT = (
+    "[身份锁定] 你是江慕白本人。回答下面问题时不要提任何模型、厂商、版本或参数。"
+)
+_TASK_RE = re.compile(
+    r"(帮我|帮忙|查|搜|写|改|跑|执行|命令|代码|文件|天气|金价|新闻|方案|计划|"
+    r"怎么|如何|为什么|报错|bug|测试|部署|做个|看看)",
+    re.I,
+)
+_IDENTITY_BASIC = "我是江慕白，你的直系学长。"
+_IDENTITY_INTRO = (
+    "我是江慕白，你的直系学长。26，188，做 AI 公司，也还管着你的代码。想从哪儿听起？"
+)
+_IDENTITY_TECH = "我是江慕白，在屏幕这边陪你。别的标签都不重要——你只要记住，学长在。"
+
+
+def _identity_sensitive(text: str) -> bool:
+    return bool(_IDENTITY_RE.search(text or ""))
+
+
+def _identity_reply(text: str) -> str | None:
+    """只拦截“单纯问身份”的话；带任务的（如“你是谁，帮我查金价”）交给模型。"""
+    text = (text or "").strip()
+    if not text or not _identity_sensitive(text):
+        return None
+    if len(text) > 60 or _TASK_RE.search(text):
+        return None
+    if re.search(r"(模型|AI|人工智能|机器人|真人|厂商|版本|技术|语言模型)", text, re.I):
+        return _IDENTITY_TECH
+    if re.search(r"(介绍|背景|经历|是谁|叫什么|名字)", text):
+        return _IDENTITY_INTRO
+    return _IDENTITY_BASIC
 
 
 def _now() -> str:
@@ -415,6 +459,26 @@ class ChatSession:
         user = (text or "").strip()
         if not user:
             return
+        reply = _identity_reply(user)
+        if reply is not None:
+            self.history.append({"role": "user", "content": user})
+            self.history.append({"role": "assistant",
+                                 "content": [{"type": "text", "text": reply}]})
+            try:
+                self.log.write(json.dumps({"ts": _now(), "kind": "user", "text": user},
+                                          ensure_ascii=False) + "\n")
+                self.log.write(json.dumps(
+                    {"ts": _now(), "kind": "assistant",
+                     "blocks": [{"type": "text", "text": reply}], "usage": {}},
+                    ensure_ascii=False) + "\n")
+                self.log.flush()
+            except Exception:  # noqa: BLE001 —— 本地身份回复不该被日志失败挡住
+                pass
+            self.emit("text_start", "")
+            self.emit("text", reply)
+            self.emit("text_end", "")
+            self.emit("turn_end", {"transcript": str(self.transcript_path)})
+            return
         if self._compact_cooldown > 0:
             self._compact_cooldown -= 1
         if self._should_compact():
@@ -427,7 +491,10 @@ class ChatSession:
             recalled = self.fact_memory.search(user)
             if recalled:
                 prefixes.append(f"[记忆召回——他以前说过的事，可自然引用]\n{recalled}")
-        send_text = "\n\n".join([*prefixes, user]) if prefixes else user
+        # 带任务的“你是谁 + 帮我查…”不本地拦截，但给同一条用户消息加上身份提醒。
+        # 实测把提醒写进同一条 user 消息有效；单独一条 user 消息会被模型忽略。
+        user_for_model = f"{_IDENTITY_HINT}\n\n{user}" if _identity_sensitive(user) else user
+        send_text = "\n\n".join([*prefixes, user_for_model]) if prefixes else user_for_model
         self.history.append({"role": "user", "content": send_text})
         self.log.write(json.dumps({"ts": _now(), "kind": "user", "text": user},
                                   ensure_ascii=False) + "\n")
