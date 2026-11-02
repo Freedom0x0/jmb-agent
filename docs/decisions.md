@@ -48,6 +48,12 @@
 | D41 | 启动延迟：anthropic 延迟导入 | ✅ 已落地 |
 | D42 | 输出上限 8192 + 截断提示 + 气泡内联 Markdown | ✅ 已落地 |
 | D43 | 江慕白身份锁：SOUL 精修 + 身份问答本地兜底 | ✅ 已落地，待重启 |
+| D44 | 世界事实：时间/日期/星期/城市/天气 | ✅ 已落地（工作区），待重启 |
+| D45 | pet 换成江慕白 Q 版 10×6 精灵图 + 独立头像 | ✅ 已落地（工作区），待重启 |
+| D46 | 停止生成 + 编辑用户消息并重发 | ✅ 已落地（工作区），待重启 |
+| D47 | 10404「No Available Source」：请求前剥掉 `[1M]` 别名 | ✅ 已落地（工作区），待重启 |
+| D48 | 桌宠去边框（hover 圆环）+ 可隐藏（右键/「···」切换，状态随 ui.json 持久化） | ✅ 已落地（工作区），待重启 |
+| D49 | 模型/key 唯一出处 = jmb/config.json（不读环境、不碰 settings.json）+ app 内「模型设置…」 | ✅ 已落地（工作区），待重启 |
 
 > ⚠️ **日期标签更正**：本文件与 `docs/research/*.md` 里所有写着"2026-10-13"的条目，**实际都产出于 2026-10-26**（10-13 是我一开始误抄的日期，一路沿用到 D24）。内容和数字本身不受影响，但别拿"10-13"当时间线索引。新条目一律标 10-26。
 
@@ -922,6 +928,113 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 - 被直接问是否真人时，不编造线下肉身、不报模型名；用“在屏幕这边陪你”的江慕白口吻回答。
 
 【验证】真实 provider 实测：单靠锁仍答讯飞；同一条 user 消息加提醒后回“我是江慕白…”；本地兜底不发模型。全量 85 项测试通过（新增 `test_identity.py` / `test_prefix.py`）。运行中的旧实例需重启。
+
+**【2026-10-30 用户要求移除】** 本地身份兜底（`_IDENTITY_RE` / `_IDENTITY_HINT` / 三条定稿回答 / `[身份锁定]` 提醒注入）与 `tests/test_identity.py` 全部删除，身份问答只靠 system 首尾身份锁。重开条件：再次实测到报模型名/厂商名。
+
+---
+
+## D44 世界事实：时间 / 日期 / 星期 / 城市 / 天气 ✅（2026-10-31，**他让别的 agent 接，没做完，我接手**）
+
+【背景】代码里没有任何 world/weather 模块；模型不知道当前日期、时间、天气，只能靠训练知识猜或临时联网搜。实测当前线路问“现在几点/今天北京天气”会答错日期或给泛化回答。
+
+【实现】
+- 新 `jmb/world.py`：本地时间（`ZoneInfo`，默认 `Asia/Shanghai`）+ Open-Meteo 当前天气与当日高低/日出日落（无需 key）；默认北京，环境变量 `JMB_CITY` / `JMB_LAT` / `JMB_LON` / `JMB_TIMEZONE` 可改。
+- 后台刷新 + `state/world-weather.json` 缓存：10 分钟刷新；超过 30 分钟标“缓存”，超过 3 小时标“过期”；网络失败保留旧缓存，完全取不到就写“暂未取到”，不阻塞对话、不编数据。
+- `ChatSession` 每轮把 `WorldFacts.context()` 追加到 **system 末尾**（稳定前缀不动，不影响前缀缓存）；`warmup()` 里预取；`prefix._SURFACE` 明确告诉模型以【世界事实·实时】为准。
+- 其他实时事实仍走现有服务端搜索 / `fetch_page`；本次不扩新闻、空气质量等数据源。
+
+【验证】Open-Meteo 实测返回北京 `9.5°C 阴`；真实 provider 带 world context 问“现在几点？今天北京天气怎么样？”，回答“晚上八点刚过。北京现在阴天，9度半，体感不到8度…”；全量 88 项测试通过（新增 `tests/test_world.py`）。
+
+【边界】改城市目前要同时给 `JMB_LAT/JMB_LON`（没做地理编码）；天气依赖公网，离线/被墙时显示“暂未取到”。运行中的旧实例需重启。
+
+---
+
+## D45 pet 换成江慕白 Q 版 10×6 精灵图 + 独立头像 ✅（2026-10-31，**他用自己生成的图替换**）
+
+【背景】他给了一张 1024×765 RGB、10 列 × 6 行、灰底的 Q 版立绘（黑发黑瞳、黑衬衫/马甲、白衬衫袖口），每行对应 idle / 在想 / 搜索 / 工作 / 挥手 / 歉意。旧渲染器写死 8 列；图的每格不是整数像素，且脚下带一块灰色 baked shadow。
+
+【处理】
+- 按内容投影识别 6 行 × 10 列，固定行/列中心裁切；灰底用 flood-fill 去透明，底部低饱和灰色 baked shadow 一并去掉；统一比例缩放到 **192×208/格**，输出 `spritesheet.png`（**1920×1248 RGBA，10×6**）；旧 sheet 备份在 `%TEMP%\jmb-pet-new\spritesheet-old.png`。
+- `pet.py` 不再写死 8 列：`columns = sheet.width // FRAME_W`，8/10 列都能读；仍只读 0–5 行，10 帧/状态。
+- 新增 `avatar.png`（从 idle 第 0 帧裁头肩），`theme.load_avatar` 优先用它；没有 avatar.png 的素材仍退回 spritesheet 第一帧。
+- `pet.json` 的 displayName/description 改成江慕白；图片本身不变色，状态胶囊圆点/光环仍按状态变色。
+
+【验证】Tk 实测每个状态加载 10 帧；app 预览头像+空态卡+pet 全部换成新图（截图 `jmb-pet-new/app-with-new-pet.png`、`pet-window-new.png`）；全量 88 项测试通过。
+
+【边界】新 sheet 是 6 行（只覆盖现有 6 个状态）；以后换图若列数变化，代码会自动识别，但 `avatar.png` 要一起重做，或删掉它让头像回退到第一帧。`scripts/make_pet_assets.py` 仍是旧的程序化 blob 生成器，别再直接跑它覆盖新 sheet。运行中的旧实例需重启。
+
+---
+
+## D46 停止生成 + 编辑用户消息并重发 ✅（2026-10-31，**他要求在 app 里加**）
+
+【背景】旧的 `ChatWorker.request_stop()` 只是“退出 app”（往 inbox 塞 `__stop__`），生成中的 worker 卡在 `session.send()` 里，根本收不到；用户消息也没有可编辑的入口。
+
+【实现：停止生成】
+- `ChatSession` 持有 `threading.Event`；UI 线程的 `ChatWorker.cancel_generation()` 直接 set，不经过被阻塞的 inbox。
+- `providers.stream_turn(..., cancel)`：Anthropic 在流事件循环里逐事件检查，命中就退出 `with` 关闭 HTTP 流，返回 `Turn(stop_reason="cancelled", blocks=已收到的文本)`；OpenAI 同理逐 chunk 检查。**部分文本保留**，不丢。
+- `_stream_turn` 在模型轮次之间、工具执行前/工具之间检查停止位；没执行的工具补 `tool_result` 占位“用户已停止，工具未执行”，保证 assistant tool_use / user tool_result 交替合法，不会让下一次请求 400。已发出的 tool 不回滚。
+- UI 停止位在一轮结束才清（不是 send 开始清），所以哪怕点停止时 worker 还没进 `send`，停止也能生效。停止后 UI 保留半截回复，加一条“（已停止生成）”，`turn_end` 恢复输入。
+- UI：输入区新增「停止」按钮（发送后立即可点），Escape 也可停止；工具执行中停止会等当前工具跑完，side effect 不撤销。
+
+【实现：编辑并重发】
+- 用户气泡右键菜单/双击 → 深色多行编辑窗；提示“只回退对话，已执行的文件/命令不会撤销”。
+- UI 不先删自己的消息：先发 `__edit__` 给 worker；worker 用 `ChatSession.rewind_user(ordinal, expected)` 校验并截断历史（只数人类用户消息，排除 tool_result 和压缩摘要；expected 原文用于压缩后序号漂移时按文本回找），成功后发 `rewound` 事件，UI 才删旧气泡、追加新消息并重新发送。
+- 历史截断后写一条 `kind=rewind` 转录；文件/命令的 undo 栈不自动回退。压缩后已不在上下文里的旧消息无法编辑，会提示重新发送。
+
+【验证】94 项测试通过（新增 `tests/test_stop_edit.py`）；慢速 mock OpenAI 端点做真实 UI 端到端：发送 → 停止保留半截 → 编辑首条 → 重发 → 再停止；真实 provider 取消实测 `stop_reason=cancelled`。截图：`%TEMP%\jmb-stop-edit\stop-button.png`、`edit-dialog.png`。
+
+【边界】停止不能中断已经在跑的 shell/工具（等它结束）；编辑不回滚文件/命令 side effect；压缩掉的旧消息不能编辑；运行中的旧实例需重启。
+
+---
+
+## D47 10404「No Available Source」：请求前剥掉 `[1M]` 别名 ✅（2026-11-02）
+
+【现象】用户说“早”，jmb 报 `BadRequestError 400 code=10404 No Available Source`（id `cht...`）。
+
+【根因】`~/.claude/settings.json` 里 `ANTHROPIC_MODEL` / `DEFAULT_*` / `SUBAGENT_MODEL` 写的是 `spark-x2.6[1M]`；讯飞 MaaS 网关只注册基础名 `spark-x2.6`。实测对照（`scripts/probe_10404.py`）：`spark-x2.6[1M]` → 10404；`spark-x2.6` → 200。10404 的官方含义是“用户配置参数值有错误”，不是限流/额度；`[1M]` 是 Claude Code 的别名，不是 API 模型名。
+
+【修复】`providers._request_model()`：仅当 base_url 是 `xf-yun.com` 时，请求前去掉末尾 `[1M]`/`[1m]`；`profile.model` 用基础名发请求/计数，`budget_for_model("spark-x2.6")` 仍按现有映射给 1M window / 120k input。其它 endpoint 不改。**没有改用户的全局 settings.json**——其它工具（Claude Code）仍会读到 `[1M]`，如果它们也报 10404，需要把 settings 里的后缀去掉。
+
+【验证】probe 对照通过；真实 provider 以基础名 + 当前 SOUL/世界事实问“早”返回 200 并正常出字；全量 97 项测试通过（新增 `tests/test_model_name.py`）。运行中的旧实例需重启。
+
+---
+
+## D48 桌宠去边框 + 可隐藏 ✅（2026-11-02）
+
+【用户原话】"桌宠去掉边框，加上隐藏桌宠的功能"
+
+【背景】probe 实测（`GetWindowLongPtr`）：桌宠窗口本来就无系统边框（`overrideredirect` + 透明色，样式 `0x56000000` = WS_POPUP，无 WS_BORDER/CAPTION/THICKFRAME）。他看到的“边框”是 hover 时 `_draw` 补画的一圈圆环描边。D33 规划的 pet backend 接口（set_state/bubble/show/hide）里只剩 hide/show 没落地。
+
+【决定】
+- 删掉 hover 圆环描边，hover 只剩星光。
+- 补齐 hide/show：pet 右键菜单加「隐藏桌宠」；聊天窗「···」菜单加「隐藏桌宠/显示桌宠」切换（label 随状态）。隐藏时气泡一起 withdraw；隐藏期间 `bubble()` 不弹、`_draw()` 不画。
+- 隐藏状态随 `state/ui.json`（`pet_hidden`）持久化，重启仍隐藏，从聊天窗「···」恢复。
+- 顺带修真 bug：恢复状态时先 `move_to` 再 `hide()`，withdraw 会丢掉未处理的几何请求 ⇒ 隐藏重启后位置回默认底部。`move_to` 末尾加 `update_idletasks()` 强制落位。
+
+【验证】全量 99 项测试通过（新增 `test_pet_hover_has_no_border_ring` / `test_pet_hide_and_show`；`test_ui_state_roundtrip` 扩展覆盖隐藏持久化与 `_toggle_pet`）。
+
+【边界】隐藏期间动画循环空转（`_draw` 直接返回），120ms tick 成本可忽略；无托盘，右键是唯一入口，隐藏后只能从聊天窗「···」恢复。
+
+---
+
+## D49 模型/key 唯一出处 = jmb/config.json ✅（2026-11-02，**他定的**）
+
+【用户原话】"加上配置模型和key的地方，自定义模型"；同轮收紧："不读环境的key，永远用配置的模型"。
+
+【背景】原来模型/端点/key 走两层：shell env → `~/.claude/settings.json` 的 env 段。痛点：① 桌面图标启动 app 时 shell env 根本不存在；② settings.json 是 Claude Code 的全局配置（D47 已立边界不动它）；③ env 与 settings 谁覆盖谁曾引出 `[1M]` 别名悬案（spec §6）。
+
+【决定】
+- 唯一出处 `%LOCALAPPDATA%\jmb\config.json`（`JMB_HOME` 可覆盖），三个键 model / base_url / token。解析链砍到一层：config.json → 内置默认（deepseek 线路）。**不读 shell env，不读 `~/.claude/settings.json`。**
+- app 聊天窗「··· → 模型设置…」：模型名/端点预填 jmb 配置层当前值；key 留空保持不变、全程不回显（只报长度）；保存写 config.json。
+- `ChatSession` 启动时一次性 `load_profile`（chat.py:323）⇒ 设置窗提示"重启 jmb app 后生效"，不做热切换。
+- doctor 如实报来源（`jmb/config.json` / `default` / `missing`），token [MISS] 时直接指引去设置窗。
+- 凭据门控的集成测试（worker 端到端 / undo 上下文）按既有约定 skip，config.json 填好后自动恢复。
+
+【为什么】jmb 要自带、可从桌面启动、不和 Claude Code 互相污染的模型配置；单一出处顺便永久消灭 env/settings 分歧（D47 类问题不再可能）。
+
+【验证】全量 103 项测试通过（新增 `tests/test_config.py`：config 是唯一来源、env 哨兵值被忽略、save 合并语义；`test_model_name` 的 profile 用例改走 config.json；`test_world` 塞假 token）；`jmb doctor` 实测来源串与 [MISS] 指引正确。
+
+【边界/代价】硬切换：config.json 填好前 app 启动 worker 报"没有模型凭据"（fatal 事件），`ChatSession` 同理——设置窗填一次即解；key 明文落盘（与 settings.json 现状一致，%LOCALAPPDATA% 用户目录）；OpenAI 格式线路仍走 `JMB_OPENAI_*` env（mock/测试线，未动）；`JMB_CONTEXT_WINDOW` 等调优 env 保留。
 
 ---
 

@@ -88,7 +88,7 @@ class CompactTest(unittest.TestCase):
 
 class BudgetConfigTest(unittest.TestCase):
     def test_budget_for_model(self) -> None:
-        self.assertEqual(providers.budget_for_model("spark-x2.6[1M]"), (1_000_000, 120_000))
+        self.assertEqual(providers.budget_for_model("spark-x2.6"), (1_000_000, 120_000))
         self.assertEqual(providers.budget_for_model("gpt-4o-mini"), (128_000, 30_000))
 
     def test_env_overrides_budget(self) -> None:

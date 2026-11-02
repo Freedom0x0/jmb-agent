@@ -14,7 +14,7 @@ from datetime import date
 from .. import config
 from . import theme
 from .pet import PetWindow
-from .widgets import ChatView, InputBar, RoundedButton, ask_yes_no, show_message
+from .widgets import ChatView, InputBar, RoundedButton, ask_text, ask_yes_no, show_message
 
 BG = theme.BG
 PANEL = theme.PANEL
@@ -68,6 +68,18 @@ class ChatWorker(threading.Thread):
                 if isinstance(item, tuple) and item and item[0] == "__undo__":
                     self.events.put(("undo", self.session.undo()))
                     continue
+                if isinstance(item, tuple) and item and item[0] == "__edit__":
+                    ordinal, text = int(item[1]), str(item[2])
+                    expected = str(item[3]) if len(item) > 3 else ""
+                    if self.session.rewind_user(ordinal, expected=expected):
+                        self.events.put(("rewound", {"ordinal": ordinal, "text": text}))
+                        self.session.send(text)
+                    else:
+                        self.events.put(("error", "编辑失败：这条消息已不在当前上下文"
+                                                  "（可能被压缩），请重新发送。"))
+                        self.events.put(("turn_end", {
+                            "transcript": str(self.session.transcript_path)}))
+                    continue
                 self.session.send(str(item))
             try:
                 pending = self.session.confirm_pending(interactive=False)
@@ -112,10 +124,25 @@ class ChatWorker(threading.Thread):
     def send(self, text: str) -> None:
         self.inbox.put(text)
 
+    def edit_resend(self, ordinal: int, text: str, expected: str = "") -> None:
+        self.inbox.put(("__edit__", int(ordinal), str(text), str(expected)))
+
+    def cancel_generation(self) -> None:
+        session = self.session
+        if session is not None:
+            session.cancel_generation()
+
+    def clear_cancel(self) -> None:
+        session = self.session
+        if session is not None:
+            session.clear_cancel()
+
     def undo(self) -> None:
         self.inbox.put(("__undo__", None))
 
     def request_stop(self) -> None:
+        if self.session is not None:
+            self.session.cancel_generation()
         for item in list(self.pending_permissions.values()):
             item["answer"] = False
             item["event"].set()
@@ -170,7 +197,9 @@ class MainWindow(tk.Tk):
             self.status.config(text="未启动 worker")
             self.input.set_state("normal")
             self.button.set_state("normal")
+            self.stop_button.set_state("disabled")
             self.undo_button.set_state("normal")
+        self.bind("<Escape>", self._on_escape)
         self.protocol("WM_DELETE_WINDOW", self.close)
         self._poll_id = self.after(50, self._poll)
         self._brief_id: str | None = self.after(1500, self._check_brief_loop)
@@ -213,6 +242,7 @@ class MainWindow(tk.Tk):
 
         self.chat = ChatView(self)
         self.chat.grid(row=2, column=0, sticky="nsew", padx=8)
+        self.chat.on_edit_user = self.edit_user
         self.text = self.chat  # 兼容旧代码/测试里的 text.get()
 
         bottom = tk.Frame(self, bg=BG)
@@ -225,12 +255,20 @@ class MainWindow(tk.Tk):
                                     height=46, fill=theme.MINT, fg=BG,
                                     hover="#8af0de", font=theme.FONT, radius=15)
         self.button.grid(row=0, column=1, padx=(8, 0))
+        self.stop_button = RoundedButton(bottom, "停止", command=self.stop_generation,
+                                         width=62, height=46, fill=theme.PANEL_2,
+                                         fg=theme.ERROR, hover="#3a2426",
+                                         disabled_fill=theme.PANEL_2,
+                                         disabled_fg=theme.MUTED, font=theme.FONT,
+                                         radius=15)
+        self.stop_button.grid(row=0, column=2, padx=(8, 0))
+        self.stop_button.set_state("disabled")
         self.undo_button = RoundedButton(bottom, "撤销", command=self.undo, width=62,
                                          height=46, fill=theme.PANEL_2, fg=TEXT,
                                          hover=theme.BORDER, disabled_fill=theme.PANEL_2,
                                          disabled_fg=theme.MUTED, font=theme.FONT,
                                          radius=15)
-        self.undo_button.grid(row=0, column=2, padx=(8, 0))
+        self.undo_button.grid(row=0, column=3, padx=(8, 0))
 
         statusbar = tk.Frame(self, bg=BG)
         statusbar.grid(row=4, column=0, sticky="ew", padx=20, pady=(0, 10))
@@ -296,12 +334,15 @@ class MainWindow(tk.Tk):
                 self.pet.move_to(int(pet[0]), int(pet[1]))
             except (TypeError, ValueError):
                 pass
+        if data.get("pet_hidden"):
+            self.pet.hide()
 
     def _save_ui_state(self) -> None:
         chat = (f"{self.winfo_width()}x{self.winfo_height()}"
                 f"+{self.winfo_x()}+{self.winfo_y()}")
         state = {"chat": chat,
-                 "pet": [self.pet.win.winfo_x(), self.pet.win.winfo_y()]}
+                 "pet": [self.pet.win.winfo_x(), self.pet.win.winfo_y()],
+                 "pet_hidden": self.pet.hidden}
         try:
             path = self._ui_state_path()
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -316,6 +357,9 @@ class MainWindow(tk.Tk):
         menu.add_command(label="今日清单", command=self.show_brief)
         menu.add_command(label="复制最后一条回复", command=self._copy_last)
         menu.add_command(label="撤销上一轮", command=self.undo)
+        menu.add_command(label="模型设置…", command=self._open_model_config)
+        menu.add_command(label="显示桌宠" if self.pet.hidden else "隐藏桌宠",
+                         command=self._toggle_pet)
         menu.add_separator()
         menu.add_command(label="关于 jmb", command=lambda: show_message(
             self, "关于 jmb", "jmb · 江慕白\n本地会话 · Tkinter 壳"))
@@ -342,7 +386,9 @@ class MainWindow(tk.Tk):
             self.chat.append(text, role)
 
     def send(self) -> None:
-        text = self.input.get().strip()
+        self._begin_turn(self.input.get().strip())
+
+    def _begin_turn(self, text: str) -> None:
         if not text or self.busy or self.worker is None:
             return
         self.input.clear()
@@ -350,11 +396,47 @@ class MainWindow(tk.Tk):
         self.busy = True
         self.input.set_state("disabled")
         self.button.set_state("disabled")
+        # 立即允许停止；停止位在一轮结束才清，所以哪怕 worker 还没进 send 也能生效。
+        self.stop_button.set_state("normal")
         self.undo_button.set_state("disabled")
         self.chat.show_typing(True)
         self.pet.set_state("thinking")
         self.status.config(text="在想了…")
         self.worker.send(text)
+
+    def edit_user(self, index: int, text: str) -> None:
+        if self.worker is None:
+            return
+        if self.busy:
+            self.chat.append("先停止当前回复，再编辑这一条。", "warn")
+            return
+        new_text = ask_text(self, "编辑并重发", text)
+        if new_text is None:
+            return
+        new_text = new_text.strip()
+        if not new_text:
+            return
+        # 回退由 worker 先确认；成功后用 rewound 事件再动 UI，避免压缩后序号对不上时白删。
+        self.busy = True
+        self.input.set_state("disabled")
+        self.button.set_state("disabled")
+        self.stop_button.set_state("disabled")
+        self.undo_button.set_state("disabled")
+        self.status.config(text="正在重发…")
+        self.pet.set_state("thinking")
+        self.worker.edit_resend(index, new_text, text)
+
+    def stop_generation(self) -> None:
+        if not self.busy or self.worker is None:
+            return
+        self.worker.cancel_generation()
+        self.stop_button.set_state("disabled")
+        self.status.config(text="正在停止…")
+        self.pet.set_state("waiting")
+
+    def _on_escape(self, _event=None) -> None:
+        if self.busy:
+            self.stop_generation()
 
     def undo(self) -> None:
         if self.busy or self.worker is None:
@@ -367,6 +449,29 @@ class MainWindow(tk.Tk):
         self.lift()
         self.focus_force()
         self.input.focus_set()
+
+    def _toggle_pet(self) -> None:
+        if self.pet.hidden:
+            self.pet.show()
+        else:
+            self.pet.hide()
+
+    def _open_model_config(self) -> None:
+        from .widgets import ask_model_config
+
+        jmb_config = config.load_model_config()
+        effective = config.resolve_model()
+        values = ask_model_config(self, {
+            "model": jmb_config.get("model", ""),
+            "base_url": jmb_config.get("base_url", ""),
+            "token_len": len(config.resolve_token().value),
+            "effective": effective.value,
+            "source": effective.source,
+        })
+        if values is None:
+            return
+        config.save_model_config(values["model"], values["base_url"], values["token"])
+        show_message(self, "已保存", "模型设置已写进 jmb 自己的配置，重启 jmb app 后生效。")
 
     def _brief_paths(self) -> tuple:
         today = date.today()
@@ -450,11 +555,13 @@ class MainWindow(tk.Tk):
             if not self.busy:
                 self.input.set_state("normal")
                 self.button.set_state("normal")
+                self.stop_button.set_state("disabled")
                 self.undo_button.set_state("normal")
                 self.input.focus_set()
         elif kind == "text_start":
             self.chat.show_typing(False)
             self.chat.begin_stream()
+            self.stop_button.set_state("normal")
             self.pet.set_state("working")
             self.status.config(text="在写…")
         elif kind == "text":
@@ -462,9 +569,11 @@ class MainWindow(tk.Tk):
         elif kind == "text_end":
             self.chat.end_stream()
         elif kind == "thinking":
+            self.stop_button.set_state("normal")
             self.pet.set_state("thinking")
             self.status.config(text="在想…")
         elif kind == "search":
+            self.stop_button.set_state("normal")
             self.pet.set_state("searching")
             self.status.config(text="联网搜索中…")
         elif kind == "usage":
@@ -472,6 +581,7 @@ class MainWindow(tk.Tk):
                 text=f"in {data.get('input', 0)} · cache {data.get('cache_read', 0)} "
                      f"· out {data.get('output', 0)}")
         elif kind == "activity":
+            self.stop_button.set_state("normal")
             self.chat.append(str(data), "meta")
             self.pet.set_state("working")
         elif kind == "compacting":
@@ -493,16 +603,33 @@ class MainWindow(tk.Tk):
             self.pet.bubble("我改了自己的记录，undo 可撤。", 3500, on_click=self._show_chat)
         elif kind == "code":
             receipt = str(data.get("receipt", ""))
+            self.stop_button.set_state("normal")
             self.chat.append(f"{data.get('name')}\n{receipt[:2000]}", "meta")
             self.pet.set_state("working")
         elif kind == "undo":
             self.chat.append(f"已撤销：{data}", "edit")
             self.pet.set_state("waving")
             self.undo_button.set_state("normal")
+        elif kind == "rewound":
+            index = int(data.get("ordinal", -1))
+            text = str(data.get("text", ""))
+            self.chat.truncate_from_user(index)
+            self.chat.append(text, "user")
+            self.chat.show_typing(True)
+            self.status.config(text="在想了…")
+            self.pet.set_state("thinking")
+        elif kind == "stopped":
+            self.stop_button.set_state("disabled")
+            self.chat.end_stream()
+            self.chat.show_typing(False)
+            self.chat.append("（已停止生成）", "meta")
+            self.pet.set_state("idle")
+            self.status.config(text="已停止")
         elif kind == "error":
             self.chat.end_stream()
             self.chat.show_typing(False)
             self.chat.append(f"这一轮出错：{data}", "error")
+            self.stop_button.set_state("disabled")
             self.pet.set_state("failed")
         elif kind == "permission":
             self.pet.set_state("waiting")
@@ -527,11 +654,14 @@ class MainWindow(tk.Tk):
                 self.worker.join(timeout=1)
             self._finish_close()
         elif kind == "turn_end":
+            if self.worker is not None:
+                self.worker.clear_cancel()
             self.busy = False
             self.chat.show_typing(False)
             self.chat.end_stream()
             self.input.set_state("normal")
             self.button.set_state("normal")
+            self.stop_button.set_state("disabled")
             self.undo_button.set_state("normal")
             self.input.focus_set()
             self.pet.set_state("idle")
@@ -549,6 +679,7 @@ class MainWindow(tk.Tk):
             self.status.config(text="收尾中…")
             self.input.set_state("disabled")
             self.button.set_state("disabled")
+            self.stop_button.set_state("disabled")
             self.undo_button.set_state("disabled")
             self.pet.set_state("waiting")
             self.worker.request_stop()

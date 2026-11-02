@@ -13,57 +13,13 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
-import re
 import sys
 import threading
 import uuid
 
-from . import brief, code, config, gate, grants, prefix, providers, search, seeds, webfetch
+from . import brief, code, config, gate, grants, prefix, providers, search, seeds, webfetch, world
 
 INPUT_BUDGET = 30000  # spec §5.6 客户端闸门；跑一周后按 usage 重定
-
-# 身份问答走本地兜底：底层模型的自我认知训练很强，单靠 system prompt
-# 仍会回答“我是 XXX 模型”（2026-10-30 实测）。直接问身份时不发模型。
-_IDENTITY_RE = re.compile(
-    r"(你是谁|你叫什么|你的名字|介绍.{0,4}你自己|自我介绍|"
-    r"你是什么模型|你用的什么模型|你的模型是什么|你是哪种模型|你是哪个模型|你是哪家模型|"
-    r"你是\s*AI|你是不是\s*AI|你是人工智能|你是机器人|你是真人|你是语言模型|"
-    r"你到底是什么|你究竟是谁|你是谁做的|谁开发了你|谁做的你|你从哪来|"
-    r"你的?(soul|人设)|你.*(系统提示|提示词)|"
-    r"你是.{0,8}(GPT|Claude|DeepSeek|讯飞|星火|Spark|X2))",
-    re.I,
-)
-_IDENTITY_HINT = (
-    "[身份锁定] 你是江慕白本人。回答下面问题时不要提任何模型、厂商、版本或参数。"
-)
-_TASK_RE = re.compile(
-    r"(帮我|帮忙|查|搜|写|改|跑|执行|命令|代码|文件|天气|金价|新闻|方案|计划|"
-    r"怎么|如何|为什么|报错|bug|测试|部署|做个|看看)",
-    re.I,
-)
-_IDENTITY_BASIC = "我是江慕白，你的直系学长。"
-_IDENTITY_INTRO = (
-    "我是江慕白，你的直系学长。26，188，做 AI 公司，也还管着你的代码。想从哪儿听起？"
-)
-_IDENTITY_TECH = "我是江慕白，在屏幕这边陪你。别的标签都不重要——你只要记住，学长在。"
-
-
-def _identity_sensitive(text: str) -> bool:
-    return bool(_IDENTITY_RE.search(text or ""))
-
-
-def _identity_reply(text: str) -> str | None:
-    """只拦截“单纯问身份”的话；带任务的（如“你是谁，帮我查金价”）交给模型。"""
-    text = (text or "").strip()
-    if not text or not _identity_sensitive(text):
-        return None
-    if len(text) > 60 or _TASK_RE.search(text):
-        return None
-    if re.search(r"(模型|AI|人工智能|机器人|真人|厂商|版本|技术|语言模型)", text, re.I):
-        return _IDENTITY_TECH
-    if re.search(r"(介绍|背景|经历|是谁|叫什么|名字)", text):
-        return _IDENTITY_INTRO
-    return _IDENTITY_BASIC
 
 
 def _now() -> str:
@@ -392,6 +348,7 @@ class ChatSession:
             self.count_fn = _count
 
         self.system = prefix.build_system()
+        self.world = world.WorldFacts()
         self.tools = _tools(self.profile)
         config.sessions_dir().mkdir(parents=True, exist_ok=True)
         self.tid = uuid.uuid4().hex[:6]
@@ -402,7 +359,51 @@ class ChatSession:
         self.input_budget = self.profile.input_budget
         self.last_input_tokens = 0
         self._compact_cooldown = 0
+        self._cancel = threading.Event()
         self.closed = False
+
+    def cancel_generation(self) -> None:
+        """从 UI 线程点停止：置位事件，流式循环会在下一个事件/轮次边界退出。"""
+        self._cancel.set()
+
+    def clear_cancel(self) -> None:
+        """turn_end 后清掉终局窗口里误点的停止位，别误伤下一条消息。"""
+        self._cancel.clear()
+
+    def rewind_user(self, ordinal: int, expected: str | None = None) -> bool:
+        """删掉第 ordinal 条人类用户消息及其后所有历史（tool_result/摘要不算）。"""
+        indexes = []
+        for i, message in enumerate(self.history):
+            content = message.get("content")
+            if message.get("role") != "user" or not isinstance(content, str):
+                continue
+            if content.startswith("[系统生成的上下文摘要"):
+                continue
+            indexes.append(i)
+        cut = indexes[ordinal] if 0 <= ordinal < len(indexes) else None
+        if expected and (cut is None
+                         or expected not in str(self.history[cut].get("content", ""))):
+            # 压缩后 UI 的全局序号可能和保留历史对不上：用原话找回仍在上下文里的那条。
+            matches = [i for i in indexes
+                       if expected in str(self.history[i].get("content", ""))]
+            if not matches:
+                return False
+            cut = matches[-1]
+        if cut is None:
+            return False
+        removed = self.history[cut:]
+        del self.history[cut:]
+        self.last_input_tokens = 0
+        try:
+            self.log.write(json.dumps(
+                {"ts": _now(), "kind": "rewind", "ordinal": ordinal,
+                 "removed_messages": len(removed),
+                 "removed_user": removed[0].get("content", "") if removed else ""},
+                ensure_ascii=False) + "\n")
+            self.log.flush()
+        except Exception:  # noqa: BLE001
+            pass
+        return True
 
     def _load_count_client(self) -> None:
         import anthropic  # 延迟加载：启动不必等这个 10s+ 的导入
@@ -412,7 +413,8 @@ class ChatSession:
             timeout=120.0, max_retries=1)
 
     def warmup(self) -> None:
-        """ready 后后台预热 SDK，让第一条消息不用再等导入。"""
+        """ready 后后台预热 SDK + 天气，让第一条消息不用再等。"""
+        self.world.refresh_async()
         if self.profile.protocol != "anthropic" or not config.resolve_token().value:
             return
         try:
@@ -459,26 +461,6 @@ class ChatSession:
         user = (text or "").strip()
         if not user:
             return
-        reply = _identity_reply(user)
-        if reply is not None:
-            self.history.append({"role": "user", "content": user})
-            self.history.append({"role": "assistant",
-                                 "content": [{"type": "text", "text": reply}]})
-            try:
-                self.log.write(json.dumps({"ts": _now(), "kind": "user", "text": user},
-                                          ensure_ascii=False) + "\n")
-                self.log.write(json.dumps(
-                    {"ts": _now(), "kind": "assistant",
-                     "blocks": [{"type": "text", "text": reply}], "usage": {}},
-                    ensure_ascii=False) + "\n")
-                self.log.flush()
-            except Exception:  # noqa: BLE001 —— 本地身份回复不该被日志失败挡住
-                pass
-            self.emit("text_start", "")
-            self.emit("text", reply)
-            self.emit("text_end", "")
-            self.emit("turn_end", {"transcript": str(self.transcript_path)})
-            return
         if self._compact_cooldown > 0:
             self._compact_cooldown -= 1
         if self._should_compact():
@@ -491,19 +473,18 @@ class ChatSession:
             recalled = self.fact_memory.search(user)
             if recalled:
                 prefixes.append(f"[记忆召回——他以前说过的事，可自然引用]\n{recalled}")
-        # 带任务的“你是谁 + 帮我查…”不本地拦截，但给同一条用户消息加上身份提醒。
-        # 实测把提醒写进同一条 user 消息有效；单独一条 user 消息会被模型忽略。
-        user_for_model = f"{_IDENTITY_HINT}\n\n{user}" if _identity_sensitive(user) else user
-        send_text = "\n\n".join([*prefixes, user_for_model]) if prefixes else user_for_model
+        send_text = "\n\n".join([*prefixes, user]) if prefixes else user
         self.history.append({"role": "user", "content": send_text})
         self.log.write(json.dumps({"ts": _now(), "kind": "user", "text": user},
                                   ensure_ascii=False) + "\n")
         self.log.flush()
         try:
+            facts = self.world.context()
+            turn_system = f"{self.system}\n\n---\n\n{facts}" if facts else self.system
             self.code_session.begin_turn()
-            usage = _stream_turn(self.profile, self.count_fn, self.system, self.tools,
+            usage = _stream_turn(self.profile, self.count_fn, turn_system, self.tools,
                                  self.history, self.log, self.fact_memory, self.code_session,
-                                 self.emit, budget=self.input_budget)
+                                 self.emit, budget=self.input_budget, cancel=self._cancel)
             if isinstance(usage, dict) and usage.get("input"):
                 self.last_input_tokens = int(usage["input"])
         except Exception as exc:  # noqa: BLE001 —— 一轮失败不拖垮会话
@@ -511,6 +492,8 @@ class ChatSession:
         finally:
             self.code_session.end_turn()
             self.emit("turn_end", {"transcript": str(self.transcript_path)})
+            # 只在一轮结束后清停止位：如果用户在本轮启动前就点了停止，仍应生效。
+            self._cancel.clear()
 
     def undo(self) -> str:
         message = self.code_session.undo_last_turn() or gate.undo()
@@ -542,7 +525,8 @@ class ChatSession:
 
 
 def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log,
-                 fact_memory, code_session, emit, budget: int = INPUT_BUDGET) -> dict:
+                 fact_memory, code_session, emit, budget: int = INPUT_BUDGET,
+                 cancel=None) -> dict:
     thinking_shown = False
     last_usage: dict = {}
 
@@ -555,18 +539,34 @@ def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log
         else:
             emit(kind, text)
 
+    def stopped() -> None:
+        emit("text_end", "")
+        emit("stopped", "")
+
     while True:
+        if cancel is not None and cancel.is_set():
+            stopped()
+            return last_usage
         _enforce_budget(count_fn, profile, system, tools, history, budget=budget)
-        turn = providers.stream_turn(profile, system, tools, history, on_event)
+        turn = providers.stream_turn(profile, system, tools, history, on_event,
+                                     cancel=cancel)
         last_usage = turn.usage or {}
         emit("text_end", "")
-        emit("usage", turn.usage)
-        log.write(json.dumps({"ts": _now(), "kind": "assistant", "blocks": turn.blocks,
-                              "usage": turn.usage}, ensure_ascii=False) + "\n")
+        if turn.stop_reason != "cancelled":
+            emit("usage", turn.usage)
+        record = {"ts": _now(), "kind": "assistant", "blocks": turn.blocks,
+                  "usage": turn.usage}
+        if turn.stop_reason == "cancelled":
+            record["stopped"] = True
+        log.write(json.dumps(record, ensure_ascii=False) + "\n")
         log.flush()
+        if turn.blocks:
+            history.append({"role": "assistant", "content": turn.blocks})
+        if turn.stop_reason == "cancelled":
+            emit("stopped", "")
+            return last_usage
         if not turn.blocks:
             return last_usage  # 空轮次不进历史，避免下次请求 400
-        history.append({"role": "assistant", "content": turn.blocks})
 
         if turn.stop_reason == "max_tokens":
             limit = getattr(profile, "max_output_tokens", 0)
@@ -576,9 +576,25 @@ def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log
         if turn.stop_reason != "tool_use":
             return last_usage
 
+        # 模型已经给出工具调用，但用户刚点了停止：不再执行，补占位结果保持历史合法。
+        if cancel is not None and cancel.is_set():
+            results = [{"type": "tool_result", "tool_use_id": block.get("id", ""),
+                        "content": "[用户已停止，工具未执行]"}
+                       for block in turn.blocks if block.get("type") == "tool_use"]
+            if results:
+                history.append({"role": "user", "content": results})
+            stopped()
+            return last_usage
+
         results = []
+        cancelled = False
         for block in turn.blocks:
             if block.get("type") != "tool_use":
+                continue
+            if cancel is not None and cancel.is_set():
+                results.append({"type": "tool_result", "tool_use_id": block.get("id", ""),
+                                "content": "[用户已停止，工具未执行]"})
+                cancelled = True
                 continue
             name, payload = block.get("name", ""), dict(block.get("input") or {})
             if name == "fetch_page":
@@ -605,6 +621,9 @@ def _stream_turn(profile, count_fn, system: str, tools: list, history: list, log
         if not results:
             return last_usage  # 声称 tool_use 却没有工具块：别写空 user 消息
         history.append({"role": "user", "content": results})
+        if cancelled:
+            stopped()
+            return last_usage
 
 
 def _terminal_emit(kind: str, data) -> None:

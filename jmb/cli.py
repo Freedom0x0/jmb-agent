@@ -34,14 +34,13 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
         print("线路      [WARN] provider profile 解析失败")
 
     model = config.resolve_model()
-    env_model, settings_model = config.raw_model_values()
-    print(f"模型名    生效={model.value}  （env={env_model or '<空>'} / settings={settings_model or '<空>'}；来源 {model.source}）")
+    print(f"模型名    生效={model.value}  （来源 {model.source}）")
 
     token = config.resolve_token()
     if token.value:
         print(f"token     长度 {len(token.value)}  （来源 {token.source}；只报长度，不回显）")
     else:
-        print("token     [MISS] env 和 ~/.claude/settings.json 的 env 段里都没有")
+        print("token     [MISS] jmb/config.json 里没有——在 app 聊天窗「··· → 模型设置…」里填")
         problems += 1
 
     forge = config.forge_home()
@@ -74,10 +73,6 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
         print(f"今日日报  已跑（{brief.name}）")
     else:
         print(f"今日日报  未跑（{brief} 不存在；brief 属 Phase 7，未建成属正常）")
-
-    if not config.CLAUDE_SETTINGS_PATH.is_file():
-        print(f"[WARN] {config.CLAUDE_SETTINGS_PATH} 不存在——凭据回退只剩 env 一层")
-        problems += 1
 
     print(f"Python    {sys.version.split()[0]}")
     print("体检结论  " + ("有标 [WARN]/[MISS] 的项要看一眼" if problems else "干净"))

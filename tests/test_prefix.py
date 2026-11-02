@@ -35,10 +35,11 @@ class PrefixTest(unittest.TestCase):
         self.assertLess(system.index("LEARN-MARKER"), system.index("REL-MARKER"))
         self.assertLess(system.index("REL-MARKER"), system.index(prefix._IDENTITY_TAIL))
 
-    def test_seed_persona_contains_identity_rule(self) -> None:
-        self.assertIn("26 岁", seeds.SOUL_V0)
-        self.assertIn("不是模型", seeds.SOUL_V0)
-        self.assertIn("被问“你是谁”", seeds.SOUL_V0)
+    def test_seed_persona_contains_persona_core(self) -> None:
+        self.assertIn("江慕白", seeds.SOUL_V0)
+        self.assertIn("二十六岁", seeds.SOUL_V0)
+        self.assertIn("狐狸眼", seeds.SOUL_V0)
+        self.assertIn("AI科技公司", seeds.SOUL_V0)
 
 
 if __name__ == "__main__":

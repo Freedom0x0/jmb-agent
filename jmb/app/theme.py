@@ -47,12 +47,16 @@ def round_rect(canvas: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
 
 
 def load_avatar(size: int, bg: str = BG, ring: str | None = None, master=None):
-    """把 spritesheet 第一帧裁成圆形头像（RGB 合成，避免 Tk 透明像素发黑）。"""
+    """优先用单独的头像图，否则把 spritesheet 第一帧裁成圆形头像。"""
     from PIL import Image, ImageDraw, ImageTk
 
     try:
-        sheet = Image.open(ASSET_DIR / "spritesheet.png").convert("RGBA")
-        frame = sheet.crop((0, 0, 192, 208))
+        avatar_path = ASSET_DIR / "avatar.png"
+        if avatar_path.exists():
+            frame = Image.open(avatar_path).convert("RGBA")
+        else:
+            sheet = Image.open(ASSET_DIR / "spritesheet.png").convert("RGBA")
+            frame = sheet.crop((0, 0, 192, 208))
         bbox = frame.getbbox()
         if bbox:
             frame = frame.crop(bbox)

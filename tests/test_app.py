@@ -264,6 +264,7 @@ print(1)
                     first.geometry("900x680+200+150")
                     first.pet.move_to(300, 200)
                     first.update()
+                    first._toggle_pet()
                     first._save_ui_state()
                     first.close()
                     second._persist = True
@@ -272,6 +273,8 @@ print(1)
                     self.assertEqual(second.geometry(), "900x680+200+150")
                     self.assertEqual(
                         (second.pet.win.winfo_x(), second.pet.win.winfo_y()), (300, 200))
+                    self.assertTrue(second.pet.hidden)
+                    self.assertFalse(second.pet.win.winfo_ismapped())
                 finally:
                     second.close()
             finally:
@@ -307,6 +310,59 @@ print(1)
             self.assertFalse(window.pet.bubble_window.win.winfo_ismapped())
         finally:
             window.close()
+
+    def test_pet_hover_has_no_border_ring(self) -> None:
+        try:
+            root = tk.Tk()
+        except tk.TclError:
+            self.skipTest("no display")
+        root.withdraw()
+        try:
+            from jmb.app.pet import PetWindow
+
+            pet = PetWindow(root)
+            pet.win.withdraw()
+            try:
+                def oval_count() -> int:
+                    return sum(1 for item in pet.canvas.find_all()
+                               if pet.canvas.type(item) == "oval")
+                before = oval_count()
+                pet._enter()
+                pet.win.update_idletasks()
+                self.assertEqual(oval_count(), before)
+            finally:
+                pet.close()
+        finally:
+            root.destroy()
+
+    def test_pet_hide_and_show(self) -> None:
+        try:
+            root = tk.Tk()
+        except tk.TclError:
+            self.skipTest("no display")
+        root.withdraw()
+        try:
+            from jmb.app.pet import PetWindow
+
+            pet = PetWindow(root)
+            try:
+                pet.bubble("还在", 1000)
+                pet.win.update_idletasks()
+                self.assertTrue(pet.bubble_window.win.winfo_ismapped())
+                pet.hide()
+                self.assertTrue(pet.hidden)
+                self.assertFalse(pet.win.winfo_ismapped())
+                self.assertFalse(pet.bubble_window.win.winfo_ismapped())
+                pet.bubble("不该出现", 1000)
+                pet.win.update_idletasks()
+                self.assertFalse(pet.bubble_window.win.winfo_ismapped())
+                pet.show()
+                self.assertFalse(pet.hidden)
+                self.assertTrue(pet.win.winfo_ismapped())
+            finally:
+                pet.close()
+        finally:
+            root.destroy()
 
     def test_brief_notify_invokes_powershell(self) -> None:
         import sys

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 
 from . import config
@@ -32,11 +33,15 @@ class ProviderProfile:
     max_output_tokens: int = 8192          # 单次回复上限；thinking 也算在里面
 
 
+# 模型 ID → (context_window, input_budget)。换模型在这里加一行；
+# 未知模型按 128K 小窗口保守处理。1M 模型不把 1M 当工作区用。
+_MODEL_BUDGETS: dict[str, tuple[int, int]] = {
+    "spark-x2.6": (1_000_000, 120_000),
+}
+
+
 def budget_for_model(model: str) -> tuple[int, int]:
-    """(context_window, input_budget)。1M 模型不把 1M 当工作区用。"""
-    if "1m" in (model or "").lower():
-        return 1_000_000, 120_000
-    return 128_000, 30_000
+    return _MODEL_BUDGETS.get((model or "").lower(), (128_000, 30_000))
 
 
 def _env_positive(name: str) -> int | None:
@@ -45,6 +50,14 @@ def _env_positive(name: str) -> int | None:
     except (TypeError, ValueError):
         return None
     return value if value > 0 else None
+
+
+def _request_model(model: str, base_url: str) -> str:
+    """网关只注册基础模型名；Claude Code 的 [1M] 别名直接发过去会 10404。"""
+    model = (model or "").strip()
+    if "xf-yun.com" in (base_url or "").lower():
+        return re.sub(r"\[1m\]$", "", model, flags=re.I).strip()
+    return model
 
 
 @dataclass
@@ -74,12 +87,14 @@ def load_profile() -> ProviderProfile:
             context_window=_env_positive("JMB_CONTEXT_WINDOW") or window,
             input_budget=_env_positive("JMB_INPUT_BUDGET") or budget,
             max_output_tokens=_env_positive("JMB_MAX_OUTPUT_TOKENS") or 8192)
-    # 默认：当前在用的这条线路（DeepSeek 的 Anthropic 兼容端点）
-    model = config.resolve_model().value
+    # 默认：当前在用的这条线路（Anthropic 兼容端点）
+    base_url = config.resolve_base_url().value
+    raw_model = config.resolve_model().value
+    model = _request_model(raw_model, base_url)
     window, budget = budget_for_model(model)
     return ProviderProfile(
         "deepseek-anthropic", "anthropic",
-        config.resolve_base_url().value, model,
+        base_url, model,
         supports_server_web_search=True, echo_thinking_required=False, allow_thinking_drop=True,
         context_window=_env_positive("JMB_CONTEXT_WINDOW") or window,
         input_budget=_env_positive("JMB_INPUT_BUDGET") or budget,
@@ -89,7 +104,7 @@ def load_profile() -> ProviderProfile:
 # ---- 线路一：Anthropic 协议 ----
 
 def _anthropic_turn(profile: ProviderProfile, system: str, tools: list,
-                    history: list, on_event) -> Turn:
+                    history: list, on_event, cancel=None) -> Turn:
     import anthropic
 
     token = config.resolve_token()
@@ -97,10 +112,19 @@ def _anthropic_turn(profile: ProviderProfile, system: str, tools: list,
         raise RuntimeError("没有模型凭据（jmb doctor 看 token 行）")
     client = anthropic.Anthropic(base_url=profile.base_url, auth_token=token.value,
                                  timeout=300.0, max_retries=2)
+    text_parts: list[str] = []
+
+    def partial() -> Turn:
+        blocks = ([{"type": "text", "text": "".join(text_parts)}]
+                  if text_parts else [])
+        return Turn(blocks=blocks, usage={}, stop_reason="cancelled")
+
     with client.messages.stream(model=profile.model,
                                 max_tokens=profile.max_output_tokens, system=system,
                                 tools=tools, messages=history, timeout=300.0) as stream:
         for event in stream:
+            if cancel is not None and cancel.is_set():
+                return partial()
             if event.type == "content_block_start":
                 btype = event.content_block.type
                 if btype == "thinking":
@@ -110,7 +134,10 @@ def _anthropic_turn(profile: ProviderProfile, system: str, tools: list,
                 elif btype == "text":
                     on_event("text_start")
             elif event.type == "content_block_delta" and event.delta.type == "text_delta":
+                text_parts.append(event.delta.text)
                 on_event("text", event.delta.text)
+        if cancel is not None and cancel.is_set():
+            return partial()
         message = stream.get_final_message()
     usage = message.usage
     stu = getattr(usage, "server_tool_use", None)
@@ -161,7 +188,7 @@ def _openai_messages(system: str, history: list) -> list[dict]:
 
 
 def _openai_turn(profile: ProviderProfile, system: str, tools: list,
-                 history: list, on_event) -> Turn:
+                 history: list, on_event, cancel=None) -> Turn:
     from openai import OpenAI
 
     # 本机回环不走系统代理：shell 里 http_proxy=127.0.0.1:7897 会把 127.0.0.1 的请求也劫走（实测 502）
@@ -194,6 +221,14 @@ def _openai_turn(profile: ProviderProfile, system: str, tools: list,
     finish = "stop"
     text_started = False
     for chunk in stream:
+        if cancel is not None and cancel.is_set():
+            try:
+                stream.close()
+            except Exception:  # noqa: BLE001
+                pass
+            blocks = ([{"type": "text", "text": "".join(text_parts)}]
+                      if text_parts else [])
+            return Turn(blocks=blocks, usage=usage_data, stop_reason="cancelled")
         if chunk.usage:
             details = getattr(chunk.usage, "prompt_tokens_details", None)
             usage_data = {"input": chunk.usage.prompt_tokens,
@@ -272,7 +307,8 @@ def complete(profile: ProviderProfile, system: str, user: str, max_tokens: int =
     return (response.choices[0].message.content or "").strip()
 
 
-def stream_turn(profile: ProviderProfile, system: str, tools: list, history: list, on_event) -> Turn:
+def stream_turn(profile: ProviderProfile, system: str, tools: list, history: list,
+                on_event, cancel=None) -> Turn:
     if profile.protocol == "anthropic":
-        return _anthropic_turn(profile, system, tools, history, on_event)
-    return _openai_turn(profile, system, tools, history, on_event)
+        return _anthropic_turn(profile, system, tools, history, on_event, cancel=cancel)
+    return _openai_turn(profile, system, tools, history, on_event, cancel=cancel)

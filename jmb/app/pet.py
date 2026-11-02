@@ -1,6 +1,7 @@
 """内置桌宠渲染层（D33）：透明置顶 + 薄荷色状态 + 圆角气泡。
 
-素材是 jmb 自有的 8x9 spritesheet（192x208 帧）；没有 Pillow 时退回 Canvas 画。
+素材是 jmb 自有的 spritesheet（192x208 帧，列数从图宽自动识别）；
+没有 Pillow 时退回 Canvas 画。
 """
 from __future__ import annotations
 
@@ -191,6 +192,7 @@ class PetWindow:
         self._press_pos: tuple[int, int] | None = None
         self._after: str | None = None
         self._closed = False
+        self.hidden = False
         self._hover = False
         self._bounce = 0
         self._sparkle = 0
@@ -212,10 +214,11 @@ class PetWindow:
 
             meta = json.loads((ASSET_DIR / "pet.json").read_text(encoding="utf-8"))
             sheet = Image.open(ASSET_DIR / meta["spritesheetPath"]).convert("RGBA")
+            columns = max(1, sheet.width // FRAME_W)
             frames: dict[str, list] = {}
             for state, row in STATE_ROWS.items():
                 frames[state] = []
-                for col in range(8):
+                for col in range(columns):
                     box = (col * FRAME_W, row * FRAME_H,
                            (col + 1) * FRAME_W, (row + 1) * FRAME_H)
                     frames[state].append(ImageTk.PhotoImage(sheet.crop(box), master=self.win))
@@ -235,15 +238,17 @@ class PetWindow:
         x = max(-self.width + 90, min(int(x), screen_w - 90))
         y = max(0, min(int(y), screen_h - 60))
         self.win.geometry(f"+{x}+{y}")
+        # withdraw 会丢掉还没处理的几何请求（恢复隐藏状态时位置会丢），这里强制落位。
+        self.win.update_idletasks()
 
     def _draw(self) -> None:
+        if self.hidden:
+            return
         canvas = self.canvas
         canvas.delete("all")
         color = STATE_COLORS.get(self.state, STATE_COLORS["idle"])
         bob = int(math.sin(self.tick / 9.0) * 2) + self._bounce
         frames = self._sprite_frames.get(self.state) or self._sprite_frames.get("idle")
-        if self._hover:
-            canvas.create_oval(11, 1, 209, 217, outline=_shade(color, 0.8), width=1)
         if frames:
             canvas.create_image(self.width // 2, 106 - bob,
                                 image=frames[(self.tick // 3) % len(frames)])
@@ -304,6 +309,8 @@ class PetWindow:
             self._draw()
 
     def bubble(self, text: str, milliseconds: int = 5000, on_click=None) -> None:
+        if self.hidden:
+            return
         anchor_x = self.win.winfo_x() + self.width // 2
         anchor_y = self.win.winfo_y() + 6
         self.bubble_window.show(text, anchor_x, anchor_y, milliseconds, on_click=on_click)
@@ -324,6 +331,7 @@ class PetWindow:
         menu.add_command(label="今日清单", command=lambda: self.on_brief and self.on_brief())
         menu.add_separator()
         menu.add_command(label="切换置顶", command=self.toggle_topmost)
+        menu.add_command(label="隐藏桌宠", command=self.hide)
         menu.add_command(label="退出", command=lambda: self.on_quit and self.on_quit())
         try:
             menu.tk_popup(event.x_root, event.y_root)
@@ -333,6 +341,20 @@ class PetWindow:
     def toggle_topmost(self) -> None:
         current = bool(self.win.attributes("-topmost"))
         self.win.attributes("-topmost", not current)
+
+    def hide(self) -> None:
+        if self.hidden:
+            return
+        self.hidden = True
+        self.bubble_window.win.withdraw()
+        self.win.withdraw()
+
+    def show(self) -> None:
+        if not self.hidden:
+            return
+        self.hidden = False
+        self.win.deiconify()
+        self.win.lift()
 
     def _press(self, event: tk.Event) -> None:
         self._drag = (event.x_root - self.win.winfo_x(),

@@ -244,11 +244,13 @@ def display_line(line: str) -> str:
 class CodeBubble(tk.Canvas):
     MAX_LINES = 22
 
-    def __init__(self, master, code: str, lang: str = "", max_width: int = 600):
+    def __init__(self, master, code: str, lang: str = "", max_width: int = 600,
+                 on_edit=None):
         super().__init__(master, bg=theme.BG, highlightthickness=0, bd=0)
         self._font = tkfont.Font(root=self, font=("Consolas", 9))
         self._pad = 12
         self._code = code
+        self._on_edit = on_edit
         lines = code.splitlines() or [""]
         total = len(lines)
         shown = lines[:self.MAX_LINES]
@@ -278,6 +280,8 @@ class CodeBubble(tk.Canvas):
                              text=f"…（共 {total} 行，已折叠）", fill=theme.MUTED,
                              font=theme.FONT_TINY)
         self.bind("<Button-3>", self._copy_menu)
+        if on_edit is not None:
+            self.bind("<Double-Button-1>", lambda _event: on_edit())
 
     def _wrap(self, line: str, max_px: int) -> list[str]:
         if not line:
@@ -299,6 +303,9 @@ class CodeBubble(tk.Canvas):
         menu.add_command(label="复制代码",
                          command=lambda: (self.clipboard_clear(),
                                           self.clipboard_append(self._code)))
+        if self._on_edit is not None:
+            menu.add_separator()
+            menu.add_command(label="编辑并重发", command=self._on_edit)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -306,10 +313,12 @@ class CodeBubble(tk.Canvas):
 
 
 class ChatBubble(tk.Canvas):
-    def __init__(self, master, text: str, role: str, max_width: int = 540):
+    def __init__(self, master, text: str, role: str, max_width: int = 540,
+                 on_edit=None):
         super().__init__(master, bg=theme.BG, highlightthickness=0, bd=0)
         self._role = role
         self._text = ""
+        self._on_edit = on_edit
         self._max_width = max_width
         self._font = tkfont.Font(root=self, font=theme.FONT)
         self._fonts = {
@@ -319,6 +328,8 @@ class ChatBubble(tk.Canvas):
         }
         self._pad_x, self._pad_y = 15, 11
         self.bind("<Button-3>", self._copy_menu)
+        if on_edit is not None:
+            self.bind("<Double-Button-1>", lambda _event: on_edit())
         self.set_text(text)
 
     def set_text(self, text: str) -> None:
@@ -353,6 +364,9 @@ class ChatBubble(tk.Canvas):
         menu = tk.Menu(self, tearoff=0, bg=theme.PANEL, fg=theme.TEXT,
                        activebackground=theme.MINT_DIM, activeforeground=theme.TEXT)
         menu.add_command(label="复制这条", command=lambda: self._copy())
+        if self._on_edit is not None:
+            menu.add_separator()
+            menu.add_command(label="编辑并重发", command=self._on_edit)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -448,6 +462,8 @@ class ChatView(tk.Frame):
         self.canvas.bind("<Configure>", self._on_resize)
         self.canvas.bind("<MouseWheel>", self._on_wheel)
         self._messages: list[dict] = []
+        self._user_count = 0
+        self.on_edit_user = None
         self._stream_text = ""
         self._stream_row = None
         self._stream_bubble = None
@@ -533,16 +549,17 @@ class ChatView(tk.Frame):
             self._bind_wheel(child)
 
     def _segments(self, parent: tk.Frame, text: str, role: str,
-                  max_width: int, anchor: str) -> None:
+                  max_width: int, anchor: str, on_edit=None) -> None:
         for kind, value, lang in split_segments(text):
             if kind == "code":
-                widget = CodeBubble(parent, value, lang, max_width)
+                widget = CodeBubble(parent, value, lang, max_width, on_edit=on_edit)
             else:
-                widget = ChatBubble(parent, value, role, max_width)
+                widget = ChatBubble(parent, value, role, max_width, on_edit=on_edit)
             widget.pack(anchor=anchor, pady=(0, 6))
             self._bind_wheel(widget)
 
-    def _row(self, text: str, role: str, stream: bool = False) -> tk.Frame:
+    def _row(self, text: str, role: str, stream: bool = False,
+             on_edit=None) -> tk.Frame:
         self._hide_empty()
         row = tk.Frame(self.inner, bg=theme.BG)
         row.pack(fill="x")
@@ -567,7 +584,8 @@ class ChatView(tk.Frame):
         elif role == "user":
             content = tk.Frame(row, bg=theme.BG)
             content.pack(side="right", anchor="e", padx=(90, 18), pady=(4, 10))
-            self._segments(content, text, role, self._bubble_width(), "e")
+            self._segments(content, text, role, self._bubble_width(), "e",
+                           on_edit=on_edit)
             self._bind_wheel(content)
         else:
             row.destroy()
@@ -593,13 +611,47 @@ class ChatView(tk.Frame):
         if not text:
             return
         stick = role == "user" or self._at_bottom()
-        row = self._row(text, role)
-        self._messages.append({"role": role, "text": text, "row": row})
+        user_index = None
+        on_edit = None
+        if role == "user":
+            user_index = self._user_count
+            self._user_count += 1
+            on_edit = lambda i=user_index, value=text: self._request_edit(i, value)
+        row = self._row(text, role, on_edit=on_edit)
+        message = {"role": role, "text": text, "row": row}
+        if user_index is not None:
+            message["user_index"] = user_index
+        self._messages.append(message)
         if stick:
             self._scroll_to_end()
             self._hide_jump()
         else:
             self._show_jump()
+
+    def _request_edit(self, index: int, text: str) -> None:
+        if self.on_edit_user is not None:
+            self.on_edit_user(index, text)
+
+    def truncate_from_user(self, index: int) -> bool:
+        start = next((i for i, message in enumerate(self._messages)
+                      if message.get("role") == "user"
+                      and message.get("user_index") == index), None)
+        if start is None:
+            return False
+        for message in self._messages[start:]:
+            try:
+                message["row"].destroy()
+            except tk.TclError:
+                pass
+        del self._messages[start:]
+        self._user_count = index
+        self._stream_active = False
+        self._stream_text = ""
+        self._stream_row = self._stream_bubble = None
+        self.show_typing(False)
+        self._hide_jump()
+        self._scroll_to_end()
+        return True
 
     def begin_stream(self) -> None:
         self.show_typing(False)
@@ -702,6 +754,7 @@ class ChatView(tk.Frame):
         for message in self._messages:
             message["row"].destroy()
         self._messages.clear()
+        self._user_count = 0
         self._stream_active = False
         self._stream_stick = True
         self._stream_text = ""
@@ -776,6 +829,135 @@ def ask_yes_no(parent: tk.Misc, title: str, message: str,
     win.focus_force()
     parent.wait_window(win)
     return bool(result["ok"])
+
+
+def ask_text(parent: tk.Misc, title: str, initial: str) -> str | None:
+    """深色多行编辑窗：返回新文本，取消返回 None。"""
+    win = tk.Toplevel(parent)
+    win.title(title)
+    win.configure(bg=theme.BG)
+    win.transient(parent)
+    win.resizable(False, False)
+    result = {"text": None}
+    body = tk.Frame(win, bg=theme.BG)
+    body.pack(fill="both", expand=True, padx=22, pady=18)
+    tk.Label(body, text=title, bg=theme.BG, fg=theme.TEXT, anchor="w",
+             font=("Microsoft YaHei UI", 12, "bold")).pack(fill="x")
+    tk.Label(body, text="只回退对话；已经执行的文件/命令不会撤销。",
+             bg=theme.BG, fg=theme.MUTED, anchor="w", font=theme.FONT_TINY).pack(
+        fill="x", pady=(6, 10))
+    border = tk.Frame(body, bg=theme.BORDER)
+    border.pack(fill="both", expand=True)
+    text = tk.Text(border, height=7, width=58, wrap="word", bg=theme.PANEL,
+                   fg=theme.TEXT, insertbackground=theme.MINT, selectbackground=theme.MINT_DIM,
+                   relief="flat", bd=0, font=theme.FONT, padx=10, pady=8)
+    text.pack(fill="both", expand=True, padx=1, pady=1)
+    text.insert("1.0", initial)
+    text.mark_set("insert", "end-1c")
+    row = tk.Frame(body, bg=theme.BG)
+    row.pack(fill="x", pady=(12, 0))
+    row.grid_columnconfigure(0, weight=1)
+
+    def close(ok: bool) -> None:
+        value = text.get("1.0", "end-1c").strip() if ok else None
+        if ok and not value:
+            text.focus_set()
+            return
+        result["text"] = value
+        try:
+            win.grab_release()
+        except tk.TclError:
+            pass
+        win.destroy()
+
+    RoundedButton(row, "取消", command=lambda: close(False), width=80, height=36,
+                  fill=theme.PANEL_2, fg=theme.TEXT, hover=theme.BORDER,
+                  font=theme.FONT, radius=12).grid(row=0, column=1, padx=(8, 0))
+    RoundedButton(row, "重发", command=lambda: close(True), width=96, height=36,
+                  fill=theme.MINT, fg=theme.BG, hover="#8af0de",
+                  font=theme.FONT, radius=12).grid(row=0, column=2, padx=(8, 0))
+    win.protocol("WM_DELETE_WINDOW", lambda: close(False))
+    win.bind("<Escape>", lambda _e: close(False))
+    text.bind("<Control-Return>", lambda _e: close(True))
+    win.update_idletasks()
+    width = max(520, body.winfo_reqwidth() + 44)
+    height = body.winfo_reqheight() + 36
+    _center(win, parent, width, height)
+    theme.enable_dark_titlebar(win)
+    win.grab_set()
+    win.focus_force()
+    text.focus_set()
+    parent.wait_window(win)
+    return result["text"]
+
+
+def ask_model_config(parent: tk.Misc, current: dict) -> dict | None:
+    """模型/key 设置窗（深色模态）。current 带 model/base_url/token_len/effective/source。
+    返回 {"model","base_url","token"}（留空=保持不变），取消返回 None；key 不回显。"""
+    win = tk.Toplevel(parent)
+    win.title("模型设置")
+    win.configure(bg=theme.BG)
+    win.transient(parent)
+    win.resizable(False, False)
+    result = {"values": None}
+    body = tk.Frame(win, bg=theme.BG)
+    body.pack(fill="both", expand=True, padx=22, pady=18)
+    tk.Label(body, text="模型设置", bg=theme.BG, fg=theme.TEXT, anchor="w",
+             font=("Microsoft YaHei UI", 12, "bold")).pack(fill="x")
+    tk.Label(body, text=f"当前生效：{current.get('effective', '')}"
+             f"（{current.get('source', '')}）。这里只写 jmb 自己的配置，"
+             "不影响 Claude Code 的设置；留空的项保持不变，保存后重启 jmb app 生效。",
+             bg=theme.BG, fg=theme.MUTED, anchor="w", justify="left",
+             wraplength=440, font=theme.FONT_TINY).pack(fill="x", pady=(8, 12))
+    entries: dict[str, tk.Entry] = {}
+    for key, label, initial in (
+            ("model", "模型名", current.get("model", "")),
+            ("base_url", "端点 Base URL", current.get("base_url", "")),
+            ("token", "API Key", "")):
+        tk.Label(body, text=label, bg=theme.BG, fg=theme.MUTED, anchor="w",
+                 font=theme.FONT_TINY).pack(fill="x", pady=(8, 2))
+        border = tk.Frame(body, bg=theme.BORDER)
+        border.pack(fill="x")
+        entry = tk.Entry(border, bg=theme.PANEL, fg=theme.TEXT,
+                         insertbackground=theme.MINT, selectbackground=theme.MINT_DIM,
+                         relief="flat", bd=0, font=theme.FONT)
+        entry.pack(fill="x", padx=1, pady=1, ipady=4)
+        if initial:
+            entry.insert(0, initial)
+        if key == "token":
+            entry.configure(show="•")
+            hint = (f"已配置（长度 {current.get('token_len', 0)}），留空保持不变"
+                    if current.get("token_len") else "留空保持不变")
+            tk.Label(body, text=hint, bg=theme.BG, fg=theme.MUTED, anchor="w",
+                     font=theme.FONT_TINY).pack(fill="x", pady=(2, 0))
+        entries[key] = entry
+    row = tk.Frame(body, bg=theme.BG)
+    row.pack(fill="x", anchor="e", pady=(16, 0))
+
+    def close(ok: bool) -> None:
+        if ok:
+            result["values"] = {key: entries[key].get().strip() for key in entries}
+        try:
+            win.grab_release()
+        except tk.TclError:
+            pass
+        win.destroy()
+
+    RoundedButton(row, "取消", command=lambda: close(False), width=80, height=36,
+                  fill=theme.PANEL_2, fg=theme.TEXT, hover=theme.BORDER,
+                  font=theme.FONT, radius=12).grid(row=0, column=1)
+    RoundedButton(row, "保存", command=lambda: close(True), width=96, height=36,
+                  fill=theme.MINT, fg=theme.BG, hover="#8af0de",
+                  font=theme.FONT, radius=12).grid(row=0, column=2, padx=(8, 0))
+    win.protocol("WM_DELETE_WINDOW", lambda: close(False))
+    win.bind("<Escape>", lambda _e: close(False))
+    win.update_idletasks()
+    _center(win, parent, 540, body.winfo_reqheight() + 36)
+    theme.enable_dark_titlebar(win)
+    win.grab_set()
+    win.focus_force()
+    parent.wait_window(win)
+    return result["values"]
 
 
 def show_message(parent: tk.Misc, title: str, message: str) -> None:
