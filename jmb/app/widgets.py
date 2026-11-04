@@ -906,13 +906,18 @@ def ask_model_config(parent: tk.Misc, current: dict) -> dict | None:
              font=("Microsoft YaHei UI", 12, "bold")).pack(fill="x")
     tk.Label(body, text=f"当前生效：{current.get('effective', '')}"
              f"（{current.get('source', '')}）。这里只写 jmb 自己的配置，"
-             "不影响 Claude Code 的设置；留空的项保持不变，保存后重启 jmb app 生效。",
+             "不影响 Claude Code 的设置；留空的项保持不变（上下文留空按模型表/默认）。"
+             "保存后：手机新开会话即生效，桌面 app 需重启。",
              bg=theme.BG, fg=theme.MUTED, anchor="w", justify="left",
              wraplength=440, font=theme.FONT_TINY).pack(fill="x", pady=(8, 12))
     entries: dict[str, tk.Entry] = {}
     for key, label, initial in (
             ("model", "模型名", current.get("model", "")),
             ("base_url", "端点 Base URL", current.get("base_url", "")),
+            ("context_window", "上下文窗口（token）",
+             str(current.get("context_window", "")) or ""),
+            ("input_budget", "输入预算（token）",
+             str(current.get("input_budget", "")) or ""),
             ("token", "API Key", "")):
         tk.Label(body, text=label, bg=theme.BG, fg=theme.MUTED, anchor="w",
                  font=theme.FONT_TINY).pack(fill="x", pady=(8, 2))

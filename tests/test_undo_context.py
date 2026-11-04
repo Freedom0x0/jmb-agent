@@ -12,6 +12,10 @@ class UndoContextTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self._old_home = os.environ.get("JMB_HOME")
         os.environ["JMB_HOME"] = str(Path(self.tmp.name) / "home")
+        # D49 起凭据只认 jmb/config.json；本测试流式是 mock 的，种假 token 过构造关
+        home = Path(self.tmp.name) / "home"
+        home.mkdir()
+        (home / "config.json").write_text('{"token": "sk-test"}', encoding="utf-8")
 
     def tearDown(self) -> None:
         if self._old_home is None:
@@ -21,11 +25,9 @@ class UndoContextTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_undo_injects_system_event_into_next_turn(self) -> None:
-        from jmb import config, gate
+        from jmb import gate
         from jmb.chat import ChatSession
 
-        if not config.resolve_token().value:
-            self.skipTest("no model token")
         session = ChatSession(lambda kind, data: None)
         try:
             gate.apply({"op": "UPDATE", "target": "RELATIONSHIP.md",

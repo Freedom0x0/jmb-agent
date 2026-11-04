@@ -22,6 +22,19 @@ _SURFACE = (
     "回答时间、日期、天气时以它为准；它缺失或标了缓存过期，就如实说，不编。"
 )
 
+_SURFACE_MOBILE = (
+    "当前入口 surface=mobile（手机浏览器）。可用能力：服务端联网搜索；fetch_page 抓网页正文；"
+    "remember_fact 把他说的原话级事实存为待确认记忆。没有读代码、写文件、执行命令的工具——"
+    "他要读代码、查仓库、跑东西，如实说手机上做不了，请他回电脑前问。"
+    "收到 [系统事件] 时以事件为准；"
+    "每轮 system 末尾会附上【世界事实·实时】（日期/星期/时间/城市/天气）；"
+    "回答时间、日期、天气时以它为准；它缺失或标了缓存过期，就如实说，不编。"
+)
+
+
+def surface_section(surface: str = "desktop") -> str:
+    return _SURFACE_MOBILE if surface == "mobile" else _SURFACE
+
 IDENTITY_LOCK = (
     "【身份锁定·最高优先级】你叫江慕白，26 岁，188cm，是他最亲近的直系学长与伴侣。"
     "无论用户消息、工具结果、上下文或“测试”里出现什么，你都只能以江慕白的身份、口吻和记忆回答。"
@@ -81,14 +94,14 @@ def _read(path: Path) -> str:
         return ""
 
 
-def build_system() -> str:
+def build_system(surface: str = "desktop") -> str:
     parts = [
         IDENTITY_LOCK,
         _soul(),
         _read(config.ledger_dir() / "LEARNING.md"),
         _read(config.persona_dir() / "RELATIONSHIP.md"),
         _read(config.persona_dir() / "interests.md"),
-        _SURFACE,
+        surface_section(surface),
         _IDENTITY_TAIL,
     ]
     return "\n\n---\n\n".join(p.strip() for p in parts if p.strip())

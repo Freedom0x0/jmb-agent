@@ -41,6 +41,34 @@ class ModelNameTest(unittest.TestCase):
         self.assertEqual(profile.context_window, 1_000_000)
         self.assertEqual(profile.input_budget, 120_000)
 
+    def test_budget_layers_env_over_config_over_table(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "jmbhome"
+            home.mkdir()
+            (home / "config.json").write_text(json.dumps({
+                "model": "my-model", "context_window": 123456, "input_budget": 789}),
+                encoding="utf-8")
+            with mock.patch.dict(os.environ, {"JMB_HOME": str(home)}, clear=False):
+                profile = providers.load_profile()
+            self.assertEqual((profile.context_window, profile.input_budget),
+                             (123456, 789))
+            # env 仍然盖过配置层（调优 env 保留，D49 只收编模型/端点/key）
+            with mock.patch.dict(os.environ, {"JMB_HOME": str(home),
+                                              "JMB_CONTEXT_WINDOW": "999"}, clear=False):
+                profile = providers.load_profile()
+            self.assertEqual(profile.context_window, 999)
+            # 都没写 → 模型表/默认
+            empty = Path(tmp) / "empty"
+            empty.mkdir()
+            with mock.patch.dict(os.environ, {"JMB_HOME": str(empty)}, clear=False):
+                profile = providers.load_profile()
+            self.assertEqual(profile.context_window, 128_000)
+            self.assertEqual(profile.input_budget, 30_000)
+
 
 if __name__ == "__main__":
     unittest.main()

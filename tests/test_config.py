@@ -60,6 +60,18 @@ class ModelConfigChainTest(unittest.TestCase):
         self.assertEqual(data, {"model": "m2", "note": "keep",
                                 "base_url": "https://new", "token": "sk-x"})
 
+    def test_save_keeps_positive_ints_only(self) -> None:
+        config.save_model_config(model="m", base_url="", token="",
+                                 context_window=1_000_000, input_budget=0)
+        data = json.loads((self.home / "config.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["context_window"], 1_000_000)
+        self.assertNotIn("input_budget", data)
+        config.save_model_config(model="", base_url="", token="",
+                                 context_window="abc", input_budget=789)
+        data = json.loads((self.home / "config.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["context_window"], 1_000_000)  # 非法值不覆盖
+        self.assertEqual(data["input_budget"], 789)
+
     def test_load_ignores_broken_json(self) -> None:
         (self.home / "config.json").write_text("{oops", encoding="utf-8")
         self.assertEqual(config.load_model_config(), {})

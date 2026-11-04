@@ -382,14 +382,14 @@ print(1)
         import tempfile
         from pathlib import Path
 
-        from jmb import config
-
-        if not config.resolve_token().value:
-            self.skipTest("no model token")
         old = os.environ.get("JMB_HOME")
         worker = None
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["JMB_HOME"] = str(Path(tmp) / "home")
+            home = Path(tmp) / "home"
+            os.environ["JMB_HOME"] = str(home)
+            # D49 起凭据只认 jmb/config.json；本测试只验启动/停止、不发请求，种假 token
+            home.mkdir()
+            (home / "config.json").write_text('{"token": "sk-test"}', encoding="utf-8")
             try:
                 from jmb.app.main import ChatWorker
 

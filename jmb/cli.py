@@ -17,6 +17,12 @@ def _mark(ok: bool) -> str:
     return "OK " if ok else "MISS"
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    from . import server  # 惰性导入：doctor 不该为 HTTP 服务端买单
+
+    return server.run(host=args.host, port=args.port)
+
+
 def cmd_doctor(_args: argparse.Namespace) -> int:
     problems = 0
 
@@ -88,6 +94,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("chat", help="对话：流式、SOUL 人格、服务端搜索、读正文、记忆、白名单读码")
     sub.add_parser("brief", help="每日清单（三源、零模型调用、幂等；10:00 定时跑同一命令）")
     sub.add_parser("app", help="桌面 app：聊天窗口 + 内置桌宠（Tkinter）")
+    serve = sub.add_parser("serve", help="移动端后端：HTTP+SSE，surface=mobile（D50）")
+    serve.add_argument("--host", default="0.0.0.0")
+    serve.add_argument("--port", type=int, default=8791)
     args = parser.parse_args(argv)
     if args.command == "doctor":
         return cmd_doctor(args)
@@ -104,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"app 启动失败：{type(exc).__name__}: {exc}")
             return 1
         return run_app()
+    if args.command == "serve":
+        return cmd_serve(args)
     parser.print_help()
     return 0 if args.command else 2
 

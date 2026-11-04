@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>江慕白</title>
+<style>
+  :root { --bg:#111318; --panel:#171a20; --panel2:#1d2129; --border:#282e38;
+          --text:#e9e6e1; --muted:#8d95a4; --mint:#6ee7d2; --mint-dim:#2a5c55;
+          --user:#1e3538; --user-fg:#dcfff8; --err:#f28b82; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--text);
+         font:15px/1.6 -apple-system,"PingFang SC","Microsoft YaHei UI",sans-serif;
+         display:flex; flex-direction:column; height:100dvh; }
+  header { padding:12px 16px; border-bottom:1px solid var(--border);
+           display:flex; gap:9px; align-items:center; }
+  header b { font-size:16px; }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--mint); flex:none; }
+  #status { margin-left:auto; font-size:12px; color:var(--muted); }
+  #log { flex:1; overflow-y:auto; padding:12px 14px; display:flex;
+         flex-direction:column; gap:10px; -webkit-overflow-scrolling:touch; }
+  .row { max-width:85%; padding:9px 13px; border-radius:14px;
+         white-space:pre-wrap; word-break:break-word; }
+  .me { align-self:flex-end; background:var(--user); color:var(--user-fg);
+        border-bottom-right-radius:4px; }
+  .him { align-self:flex-start; background:var(--panel2); border:1px solid var(--border);
+         border-bottom-left-radius:4px; }
+  .meta { align-self:center; background:none; color:var(--muted); font-size:12px; padding:2px 8px; }
+  .err { align-self:center; color:var(--err); font-size:13px; max-width:92%; }
+  #typing { align-self:flex-start; color:var(--muted); font-size:13px; display:none; }
+  #confirm { display:none; background:var(--panel); border:1px solid var(--mint-dim);
+             border-radius:14px; padding:12px 14px; align-self:stretch; }
+  #confirm h3 { margin:0 0 6px; font-size:14px; color:var(--mint); font-weight:600; }
+  #confirm label { display:flex; gap:8px; font-size:14px; margin:6px 0; align-items:flex-start; }
+  #confirm .btns { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  button { border:0; border-radius:12px; padding:8px 14px; font-size:14px; cursor:pointer; }
+  .primary { background:var(--mint); color:#111; font-weight:600; }
+  .ghost { background:var(--panel2); color:var(--text); border:1px solid var(--border); }
+  #searchbar { padding:6px 12px; border-bottom:1px solid var(--border); }
+  #search { width:100%; background:var(--panel2); color:var(--text);
+            border:1px solid var(--border); border-radius:10px; padding:7px 10px;
+            font-size:13px; outline:none; }
+  footer { padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+           border-top:1px solid var(--border); display:flex; gap:8px; }
+  #msg { flex:1; background:var(--panel2); color:var(--text); border:1px solid var(--border);
+         border-radius:12px; padding:10px 12px; font-size:15px; outline:none; }
+  #send { background:var(--mint); color:#111; font-weight:600; }
+  #finish { background:none; border:1px solid var(--border); color:var(--muted); }
+  #login { position:fixed; inset:0; background:var(--bg); display:flex;
+           align-items:center; justify-content:center; padding:24px; }
+  #login .card { background:var(--panel); border:1px solid var(--border); border-radius:16px;
+                 padding:22px; width:100%; max-width:380px; }
+  #login h1 { font-size:18px; margin:0 0 6px; }
+  #login p { color:var(--muted); font-size:13px; margin:0 0 14px; }
+  #token { width:100%; background:var(--panel2); color:var(--text);
+           border:1px solid var(--border); border-radius:12px; padding:10px 12px;
+           font-size:15px; outline:none; }
+  #login .primary { width:100%; margin-top:12px; padding:11px; }
+  #login .warn { color:var(--err); font-size:12px; min-height:16px; margin-top:8px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot"></span><b>江慕白</b><span id="status">连接中…</span>
+</header>
+<div id="searchbar"><input id="search" placeholder="搜索聊天记录…"></div>
+<div id="log"></div>
+<div id="confirm">
+  <h3>收尾：以下事实确认后才会进长期记忆</h3>
+  <div id="items"></div>
+  <div class="btns">
+    <button class="primary" id="ok-all">全记</button>
+    <button class="ghost" id="ok-sel">记选中的</button>
+    <button class="ghost" id="ok-no">全部不要</button>
+  </div>
+</div>
+<footer>
+  <input id="msg" placeholder="和江慕白说点什么…" enterkeyhint="send">
+  <button id="send" class="primary">发送</button>
+  <button id="finish" class="ghost">收尾</button>
+</footer>
+<div id="login">
+  <div class="card">
+    <h1>江慕白 · 配对</h1>
+    <p>把后端打印的配对 token 填进来（只发这一次，填完存在本机浏览器）。</p>
+    <input id="token" placeholder="配对 token" autocomplete="off">
+    <button class="primary" id="pair">配对</button>
+    <div class="warn" id="warn"></div>
+  </div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+let sid = null, es = null, himBubble = null;
+
+function addRow(text, cls) {
+  const div = document.createElement("div");
+  div.className = "row " + cls;
+  div.textContent = text;
+  $("log").appendChild(div);
+  $("log").scrollTop = $("log").scrollHeight;
+  return div;
+}
+function setStatus(text) { $("status").textContent = text; }
+
+function start() {
+  $("login").style.display = "none";
+  es = new EventSource("/api/stream");
+  es.addEventListener("ready", (e) => {
+    const data = JSON.parse(e.data);
+    sid = data.sid;
+    addRow("新会话开始", "meta");
+    setStatus("在线");
+  });
+  es.addEventListener("history", (e) => {
+    JSON.parse(e.data).forEach((m) => addRow(m.text, m.role === "user" ? "me" : "him"));
+    addRow("已恢复上次的记录", "meta");
+  });
+  es.addEventListener("text_start", () => {
+    himBubble = addRow("", "him");
+    $("typing").style.display = "none";
+  });
+  es.addEventListener("text", (e) => {
+    if (!himBubble) himBubble = addRow("", "him");
+    himBubble.textContent += JSON.parse(e.data);
+    $("log").scrollTop = $("log").scrollHeight;
+  });
+  es.addEventListener("text_end", () => { himBubble = null; });
+  es.addEventListener("thinking", () => setStatus("在想…"));
+  es.addEventListener("search", () => setStatus("联网搜索中…"));
+  es.addEventListener("activity", (e) => addRow(JSON.parse(e.data), "meta"));
+  es.addEventListener("usage", (e) => {
+    const u = JSON.parse(e.data);
+    setStatus(`in ${u.input || 0} · cache ${u.cache_read || 0} · out ${u.output || 0}`);
+  });
+  es.addEventListener("turn_end", () => setStatus("在线"));
+  es.addEventListener("warning", (e) => addRow(JSON.parse(e.data), "meta"));
+  es.addEventListener("notice", (e) => addRow(JSON.parse(e.data), "meta"));
+  es.addEventListener("error", (e) => addRow("出错：" + JSON.parse(e.data), "err"));
+  es.addEventListener("fatal", (e) => {
+    addRow("起不来：" + JSON.parse(e.data), "err");
+    setStatus("挂了");
+  });
+  es.addEventListener("confirm", (e) => showConfirm(JSON.parse(e.data)));
+  es.onerror = () => setStatus("断了，重连中…");
+}
+
+function showConfirm(data) {
+  const box = $("items");
+  box.innerHTML = "";
+  data.items.forEach((text, i) => {
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = true; cb.dataset.index = i + 1;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(text));
+    box.appendChild(label);
+  });
+  if (data.more) addRow(`还有 ${data.more} 条没列出来，下次再问`, "meta");
+  $("confirm").style.display = "block";
+  $("log").scrollTop = $("log").scrollHeight;
+}
+
+function answer(value) {
+  $("confirm").style.display = "none";
+  if (sid) fetch("/api/confirm", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sid, answer: value }) });
+}
+$("ok-all").onclick = () => answer("ok");
+$("ok-no").onclick = () => answer("no");
+$("ok-sel").onclick = () => {
+  const picked = [...document.querySelectorAll("#items input:checked")]
+      .map((cb) => cb.dataset.index);
+  answer(picked.length ? picked.join(",") : "no");
+};
+
+function postJSON(path, body) {
+  return fetch(path, { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body) });
+}
+function send() {
+  const input = $("msg");
+  const text = input.value.trim();
+  if (!text || !sid) return;
+  input.value = "";
+  addRow(text, "me");
+  postJSON("/api/turn", { sid, text }).then((res) => {
+    if (!res.ok) setStatus("发送失败 " + res.status + "：重开页面再发这条");
+  });
+}
+$("send").onclick = send;
+$("msg").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+$("finish").onclick = () => {
+  if (sid) fetch("/api/finish", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sid }) });
+};
+
+$("pair").onclick = async () => {
+  const res = await fetch("/api/auth", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: $("token").value.trim() }) });
+  if (res.ok) start();
+  else $("warn").textContent = "token 不对，看后端启动时打印的那串";
+};
+
+// 搜索：按可见气泡文本过滤（渲染历史有 500 条上限，更早的得翻 transcript）
+let searchTimer;
+$("search").addEventListener("input", (e) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    const q = e.target.value.trim();
+    document.querySelectorAll("#log .row").forEach((row) => {
+      row.style.display = !q || row.textContent.includes(q) ? "" : "none";
+    });
+    if (q) $("log").scrollTop = 0;
+  }, 200);
+});
+</script>
+</body>
+</html>

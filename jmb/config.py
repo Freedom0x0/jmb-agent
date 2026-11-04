@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -74,15 +75,47 @@ def load_model_config() -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def save_model_config(model: str, base_url: str, token: str) -> None:
+def save_model_config(model: str, base_url: str, token: str,
+                      context_window: int = 0, input_budget: int = 0) -> None:
     """只写非空字段（留空=保持不变），保留文件里的其它键。key 明文落盘，不回显。"""
     data = load_model_config()
     for key, value in (("model", model), ("base_url", base_url), ("token", token)):
         if value:
             data[key] = value
+    for key, value in (("context_window", context_window), ("input_budget", input_budget)):
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            data[key] = number
     path = model_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def server_token_path() -> Path:
+    """移动端后端的一次性配对 token（state/server-token）。"""
+    return jmb_home() / "state" / "server-token"
+
+
+def load_or_create_server_token() -> str:
+    """配对 token：生成一次、持久化、0600。手机填一次，之后走 cookie。"""
+    path = server_token_path()
+    try:
+        token = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        token = ""
+    if token:
+        return token
+    token = secrets.token_urlsafe(24)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(token, encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return token
 
 
 @dataclass(frozen=True)

@@ -16,6 +16,7 @@ import os
 import sys
 import threading
 import uuid
+from pathlib import Path
 
 from . import brief, code, config, gate, grants, prefix, providers, search, seeds, webfetch, world
 
@@ -152,12 +153,22 @@ BING_SEARCH = {
 }
 
 
-def _tools(profile) -> list:
+# surface 能力表（spec §4：能力是数据不是分支）。mobile 只聊天 + 搜索 + 记事实；
+# 读代码/写文件/执行命令/自维护/今日清单都是桌面站点的。
+SURFACE_TOOLS: dict[str, set[str] | None] = {
+    "mobile": {"web_search", "search_web", "fetch_page", "remember_fact"},
+}
+
+
+def _tools(profile, surface: str = "desktop") -> list:
     client_tools = [prefix.UPDATE_SELF_FILE, FETCH_PAGE, REMEMBER_FACT, READ_CODE,
                     GREP, FIND, WRITE_FILE, EDIT_FILE, RUN_COMMAND, TODAY_BRIEF]
     if profile.supports_server_web_search:
-        return [prefix.WEB_SEARCH, *client_tools]
-    return [*client_tools, BING_SEARCH]
+        tools = [prefix.WEB_SEARCH, *client_tools]
+    else:
+        tools = [*client_tools, BING_SEARCH]
+    allowed = SURFACE_TOOLS.get(surface)
+    return tools if allowed is None else [t for t in tools if t["name"] in allowed]
 
 
 # ---- 预算闸门（spec §5.6 本地侧）----
@@ -314,11 +325,62 @@ _SELF_ANNOUNCE = {"update_self_file"}
 _CODE_ANNOUNCE = {"write_file", "edit_file", "run_command"}
 
 
+# ---- 滚动会话（D53：WeChat 式单文件，桌面 app / 手机 / 终端共用）----
+
+_RENDER_CAP = 500
+
+
+def conversation_path() -> Path:
+    return config.jmb_home() / "state" / "conversation.json"
+
+
+def load_conversation() -> dict:
+    try:
+        data = json.loads(conversation_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_conversation(history: list, render: list) -> float:
+    """原子落盘；渲染视图上限 500 条（模型上下文靠压缩闸门自然收敛）。返回写入时刻。"""
+    payload = {"history": history, "render": render[-_RENDER_CAP:]}
+    path = conversation_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        return 0.0
+    return path.stat().st_mtime
+
+
+def conversation_sync(history: list, render: list, since: float) -> tuple[list, list, float]:
+    """文件比内存新（另一入口刚聊过）就采用文件的 —— 文件是权威。
+
+    ponytail: 双入口同秒并发写时后写者覆盖（单人单对话罕见）；桌面薄客户端化后根除。
+    """
+    path = conversation_path()
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return history, render, since
+    if mtime > since:
+        saved = load_conversation()
+        return (saved.get("history") or history,
+                saved.get("render") or render, mtime)
+    return history, render, since
+
+
 class ChatSession:
     """终端和 GUI 共用：模型/工具/记忆/代码改动都在这里，入口只负责收事件。"""
 
-    def __init__(self, emit) -> None:
+    def __init__(self, emit, surface: str = "desktop") -> None:
         self.emit = emit
+        self.surface = surface
+        self._render_rows: list[dict] = []
+        self._conversation_ts = 0.0
         seeds.ensure()
         self.profile = providers.load_profile()
         if self.profile.protocol == "anthropic" and not config.resolve_token().value:
@@ -347,9 +409,9 @@ class ChatSession:
                     tools=tools, messages=history).input_tokens
             self.count_fn = _count
 
-        self.system = prefix.build_system()
+        self.system = prefix.build_system(surface)
         self.world = world.WorldFacts()
-        self.tools = _tools(self.profile)
+        self.tools = _tools(self.profile, surface)
         config.sessions_dir().mkdir(parents=True, exist_ok=True)
         self.tid = uuid.uuid4().hex[:6]
         self.transcript_path = config.sessions_dir() / f"{_dt.date.today().isoformat()}-{self.tid}.jsonl"
@@ -461,6 +523,9 @@ class ChatSession:
         user = (text or "").strip()
         if not user:
             return
+        # D53：文件是权威 —— 另一入口（手机/桌面/终端）刚聊的轮次先进上下文
+        self.history, self._render_rows, self._conversation_ts = conversation_sync(
+            self.history, self._render_rows, self._conversation_ts)
         if self._compact_cooldown > 0:
             self._compact_cooldown -= 1
         if self._should_compact():
@@ -475,22 +540,35 @@ class ChatSession:
                 prefixes.append(f"[记忆召回——他以前说过的事，可自然引用]\n{recalled}")
         send_text = "\n\n".join([*prefixes, user]) if prefixes else user
         self.history.append({"role": "user", "content": send_text})
+        self._render_rows.append({"role": "user", "text": user})
         self.log.write(json.dumps({"ts": _now(), "kind": "user", "text": user},
                                   ensure_ascii=False) + "\n")
         self.log.flush()
+        buf = {"text": ""}
+
+        def emit(kind: str, data=None):
+            if kind == "text":
+                buf["text"] += str(data or "")
+            self.emit(kind, data)
+
         try:
             facts = self.world.context()
             turn_system = f"{self.system}\n\n---\n\n{facts}" if facts else self.system
             self.code_session.begin_turn()
             usage = _stream_turn(self.profile, self.count_fn, turn_system, self.tools,
                                  self.history, self.log, self.fact_memory, self.code_session,
-                                 self.emit, budget=self.input_budget, cancel=self._cancel)
+                                 emit, budget=self.input_budget, cancel=self._cancel)
             if isinstance(usage, dict) and usage.get("input"):
                 self.last_input_tokens = int(usage["input"])
         except Exception as exc:  # noqa: BLE001 —— 一轮失败不拖垮会话
             self.emit("error", f"{type(exc).__name__}: {str(exc)[:300]}")
         finally:
             self.code_session.end_turn()
+            if buf["text"]:
+                self._render_rows.append({"role": "assistant", "text": buf["text"]})
+            written = save_conversation(self.history, self._render_rows)
+            if written:
+                self._conversation_ts = written
             self.emit("turn_end", {"transcript": str(self.transcript_path)})
             # 只在一轮结束后清停止位：如果用户在本轮启动前就点了停止，仍应生效。
             self._cancel.clear()

@@ -52,6 +52,15 @@ def _env_positive(name: str) -> int | None:
     return value if value > 0 else None
 
 
+def _cfg_positive(cfg: dict, key: str) -> int | None:
+    """jmb/config.json 里的调优数（上下文窗口/输入预算）。非法当没写。"""
+    try:
+        value = int((cfg or {}).get(key, 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def _request_model(model: str, base_url: str) -> str:
     """网关只注册基础模型名；Claude Code 的 [1M] 别名直接发过去会 10404。"""
     model = (model or "").strip()
@@ -92,12 +101,13 @@ def load_profile() -> ProviderProfile:
     raw_model = config.resolve_model().value
     model = _request_model(raw_model, base_url)
     window, budget = budget_for_model(model)
+    cfg = config.load_model_config()
     return ProviderProfile(
         "deepseek-anthropic", "anthropic",
         base_url, model,
         supports_server_web_search=True, echo_thinking_required=False, allow_thinking_drop=True,
-        context_window=_env_positive("JMB_CONTEXT_WINDOW") or window,
-        input_budget=_env_positive("JMB_INPUT_BUDGET") or budget,
+        context_window=_env_positive("JMB_CONTEXT_WINDOW") or _cfg_positive(cfg, "context_window") or window,
+        input_budget=_env_positive("JMB_INPUT_BUDGET") or _cfg_positive(cfg, "input_budget") or budget,
         max_output_tokens=_env_positive("JMB_MAX_OUTPUT_TOKENS") or 8192)
 
 

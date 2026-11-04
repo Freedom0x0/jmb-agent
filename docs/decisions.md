@@ -21,7 +21,7 @@
 | D14 | L1 流程定形 | ✅ |
 | D15 | 学习文档落 Obsidian | ✅ |
 | D16 | 人格只有一个 | ⏳ 三次无异议，待最终点头 |
-| D17 | 一期不做手机端 | ✅ |
+| D17 | 一期不做手机端 | ⛔ 被 D50 取代（2026-11-03 二期开做） |
 | D18 | L2 列清单不给观点 | ✅ |
 | D19 | 兴趣记录 | ✅ |
 | D20 | 联网选型 | ✅（被 D25/D29 两度修正，现行 = 服务端搜索 + trafilatura） |
@@ -54,6 +54,10 @@
 | D47 | 10404「No Available Source」：请求前剥掉 `[1M]` 别名 | ✅ 已落地（工作区），待重启 |
 | D48 | 桌宠去边框（hover 圆环）+ 可隐藏（右键/「···」切换，状态随 ui.json 持久化） | ✅ 已落地（工作区），待重启 |
 | D49 | 模型/key 唯一出处 = jmb/config.json（不读环境、不碰 settings.json）+ app 内「模型设置…」 | ✅ 已落地（工作区），待重启 |
+| D50 | 移动端：云薄后端 + PWA 壳（surface=mobile 只聊天），key 留后端，云端 CF 从零长 | ✅ 首切片已落地（工作区），待真机验证 |
+| D51 | 移动会话历史持久化（state/mobile-history.json，模型上下文 + 渲染双份） | ✅ 已落地（工作区） |
+| D52 | 上下文窗口/输入预算进 config.json + 设置页加两字段 | ✅ 已落地（工作区） |
+| D53 | 滚动会话单文件（conversation.json）：所有入口读写同一份，循环侧同步+落盘 | ✅ 已落地（工作区） |
 
 > ⚠️ **日期标签更正**：本文件与 `docs/research/*.md` 里所有写着"2026-10-13"的条目，**实际都产出于 2026-10-26**（10-13 是我一开始误抄的日期，一路沿用到 D24）。内容和数字本身不受影响，但别拿"10-13"当时间线索引。新条目一律标 10-26。
 
@@ -1035,6 +1039,83 @@ CF 读源码发现它**本来就有整套 Obsidian 写入零件**：
 【验证】全量 103 项测试通过（新增 `tests/test_config.py`：config 是唯一来源、env 哨兵值被忽略、save 合并语义；`test_model_name` 的 profile 用例改走 config.json；`test_world` 塞假 token）；`jmb doctor` 实测来源串与 [MISS] 指引正确。
 
 【边界/代价】硬切换：config.json 填好前 app 启动 worker 报"没有模型凭据"（fatal 事件），`ChatSession` 同理——设置窗填一次即解；key 明文落盘（与 settings.json 现状一致，%LOCALAPPDATA% 用户目录）；OpenAI 格式线路仍走 `JMB_OPENAI_*` env（mock/测试线，未动）；`JMB_CONTEXT_WINDOW` 等调优 env 保留。
+
+---
+
+## D50 移动端：云薄后端 + PWA 壳 ✅（2026-11-03，**他选乙，对账后落成甲**）
+
+【用户原话】"先commit下，然后下一步做移动端"；形状追问选"乙：手机直连模型" + "甲：云端 CF 从零长"。
+
+【背景】动手前两个实测事实先摆清：① CF 是 local-first——MCP 仅 stdio（"never opens a network port"）、README 明写"明确不做"设备间同步，"记忆走 CF 云同步"现成不存在；② 仓库 D13 口子5 已定"模型 key 只留在后端，客户端永远不碰"（浏览器直连要 CORS，DeepSeek 端点 CORS 未验）。"手机自持 key 直连"会同时踩这两条。他拍板：云薄后端 + PWA 壳、key 留后端、云端 CF 从零长。
+
+【决定】
+- 形状：`ChatSession` 循环原样上云（spec §4 二期预留的薄 HTTP 形状，循环零改动），手机浏览器 PWA 当瘦客户端，surface=mobile。"直连"落在"手机不依赖他的桌面机"，**不是**"key 放手机"。
+- 能力表接线（spec §4 的 mobile 行从"一期不接线"转接线）：`chat.py` `SURFACE_TOOLS` —— mobile 只 `web_search`/`search_web` + `fetch_page` + `remember_fact`；`prefix.build_system(surface)` 散文同步裁剪（不承诺读代码/写文件/执行命令）。桌面 app / 终端 REPL 零改动（默认 desktop）。
+- 记忆：云端 CF 实例从零长（`FactMemory` 通路原样）；桌面 CC 的 T1/T2 沉淀留本地 CF ⇒ 两个库拆开，"同一个它"的记忆层面分期实现（已知代价，他选甲时点头）。
+- 会话：一只 SSE 连接 = 一只 `ChatSession`（同一窗口一会话同形）；sid 客户端保管；重连 = 新会话，跨会话连续性靠 CF 召回。收尾确认记忆走 SSE 推送 + POST 作答（同桌面 app 模态确认同形）。
+- 鉴权 v0：`state/server-token` 一次性配对 token（持久化）→ HttpOnly cookie。单 owner；多 owner / 真鉴权 = D13 二期。
+- `jmb serve`（cli 子命令，stdlib HTTP/SSE，零新依赖）；手机端单页 `jmb/server_static/index.html`。
+
+【验证】106 项测试通过（新增 `tests/test_server.py`：能力表 / 前缀裁剪 / 401 / 配对 / SSE ready / turn 排队 / 断连清理）；真机冒烟（真实进程 + 他的 config.json 凭据）：配对 200 → SSE ready → 一轮真实 deepseek-flash 调用，流式出字 + usage（in 1404 / cache_read 1152 / out 149）+ turn_end 全帧收到。
+
+【边界/代价】部署两阶段：① 桌面机 `jmb serve` + 手机同 Wi-Fi 验证形状（零成本）；② 云主机（VPS/容器，他选）+ 域名 TLS——PWA 可安装需要 HTTPS（scope-decomposition 引 MDN 实测：http://LAN 不能 install、无 service worker）。桌面 app 与移动端的记忆分裂，直到桌面 app 也变瘦客户端（slice 2，他定）；配对 token 无过期 / 无按设备撤销（单 owner v0 上限）；断网重连 = 新会话（EventSource 自重连，turn 丢失要重发）。
+
+---
+
+## D51 移动会话历史持久化（微信式） ✅（2026-11-03）
+
+【用户原话】"每次重启进会话之前的聊天记录就没了，能不能做成微信聊天记录那样，持久存在"
+
+【背景】D50 v0 形状 = 一连接一会话，重连/重启都新会话，模型和界面都从零开始（当时记在 D50 边界里）。
+
+【决定】
+- 服务器侧落盘 `state/mobile-history.json`（tmp+replace 原子写）：**双份** —— 模型可见的 `history`（上下文原样，恢复后模型接着聊）+ 渲染用 `render`（他说的/它回的纯文本，上限 500 条）。
+- 触发点：`turn_end` 时经 emit 钩子落盘（压缩后的状态一并捕获）；断连/重启不丢已完成的轮次。
+- 新连接：`ready` 之后追加 `history` SSE 事件，手机壳渲染成旧气泡 + "已恢复上次的记录"。
+- 文件快照而不是"从 JSONL 转录重放"：转录里有 compact/rewind 记录要重放语义，直接存内存 history 是精确状态，懒且稳。
+
+【验证】109 项测试通过（test_server 新增跨连接持久化：一会话发轮 → 文件断言 → 二会话收 history 帧 + 模型带着旧历史发轮）；独立复现脚本实测帧序列 ready→history→ping 正确。
+
+【边界】单 owner 一对话（多标签页同写一个文件是 last-write-wins，D13 多用户时重做）；进行中的轮次被杀掉只丢那一轮（transcript 里有底）；渲染上限 500 条，更早的只留模型上下文；桌面 app/终端不 resumed（他没提，重启频率低）。
+
+【补记（同日真机排查）】他反馈"新服务对话了还是没有历史" —— 排查：transcript 有他 16:39–17:14 的完整多轮（含工具轮），但 mobile-history.json 不存在；活体复现（普通轮 + 带 web_search 的真实工具轮，帧序列 ready→thinking→search→activity→text→turn_end）证明 D51 代码两场景都正确落盘；磁盘无第二份 jmb 副本、无冻结安装。结论：**他当时连的服务进程跑的是 D51 之前的旧代码（进程比工作区旧），或他实际在桌面/终端入口聊（D51 只覆盖手机后端）**。同批加固：`_persist_saved` 改捕 Exception 并打 stderr（不再静默吞掉会话线程）；`/` 响应加 `Cache-Control: no-store`（手机浏览器会缓存旧页面，旧页面没有 history 监听脚本——"服务器写了但手机不渲染"的另一候选）；PWA 加搜索框（客户端过滤已加载 render，上限 500 条）+ turn 失败状态提示（404=会话断了，重开页面）。
+
+---
+
+## D52 上下文窗口/输入预算进 config.json + 设置页 ✅（2026-11-03）
+
+【用户原话】"设置模型也要设置上下文。设置模型的页面需要加上"
+
+【背景】预算原来三层：`JMB_CONTEXT_WINDOW`/`JMB_INPUT_BUDGET` env 覆盖 > `budget_for_model` 模型表（只有 spark-x2.6 一行）> 默认 128K/30K。自定义模型配了名字，窗口还是猜的 —— 手机端首切片用默认 128K 跑他的自定义模型会过早压缩。
+
+【决定】
+- config.json 加 `context_window` / `input_budget` 两个正整数键；链：env > config.json > 模型表 > 默认（env 保留给调优/测试，D49 只收编模型/端点/key）。
+- 设置页加两个数字字段，留空=按模型表/默认；保存校验正整数，非法不写。
+- 手机端新会话即生效（profile 在每次 ChatSession 构造时加载）；桌面 app 需重启。
+
+【验证】test_config 存 int 合并/非法不写；test_model_name 加三层优先级（env>config>表）；109 项全过。
+
+【边界】`max_output_tokens` 仍走 env/默认（D42 的 8192 不动，他没提）；OpenAI 线路分支未接配置层（mock 线，YAGNI）。
+
+---
+
+## D53 桌面/手机/终端共用一份滚动会话 ✅（2026-11-03）
+
+【用户原话】"桌面app和手机app所有的数据都要同步啊，都要看到历史会话"
+
+【背景】D51 只让手机后端落了 mobile-history.json，桌面 app 各自内存 —— 两个入口两份历史，他要的是微信式"哪头聊都能看到全量"。
+
+【决定】
+- 单文件权威：`state/conversation.json`（双份：模型可见 history + 渲染 render，render 上限 500 条）。**同步与落盘都挂在 `ChatSession.send`（循环侧、入口无关）**：每轮开始先 `conversation_sync`（文件 mtime 更新 = 另一入口刚聊过 → 采用文件的进上下文），每轮结束原子落盘。桌面 app / serve 后端 / 终端 REPL 自动全覆盖，UI 只负责渲染。
+- 桌面 app 启动把 render 灌进聊天区（`MainWindow._restore_conversation`）；手机端 ready 后 history SSE 帧不变（PWA 零改动）。
+- mtime 纪律：自己刚落盘（mtime==ts）不回头采纳 ⇒ undo/压缩后的内存状态不被旧文件回滚；另一入口写完（mtime>ts）必采纳 ⇒ 收敛。
+- 记忆/配置天然同源（同 box 同 JMB_HOME：同一只 memory.db、同一份 config.json）；模型 key 仍只在后端（D13 口子5）。
+
+【为什么】不新建同步服务、不动 CF：transcript 与 conversation 都已在写，缺的只是"权威文件 + 循环侧挂载点"，挂进 send 后三个入口零差别。
+
+【验证】113 项测试通过（新增 `tests/test_conversation.py`：存取 / 同步采纳 / 不回滚自己 / 渲染上限 / 坏文件；`test_server` 持久化路径改指 conversation.json）。
+
+【边界/代价】双入口同秒并发写时后写者覆盖（单人单对话罕见；桌面薄客户端化后根除 —— D12 终局）；render 上限 500 条，更早的只留模型上下文（全量搜索得扫 transcript，下一切片）；undo/压缩的精确回放不做（mtime 纪律已挡住主要坑）；桌面 app 与 serve 同 box 时 CF 单写者纪律被拉伸为两进程（sqlite 锁序列化，乐观版本冲突会响着错不静默脏）——云阶段后端独占循环后自然消失。
 
 ---
 

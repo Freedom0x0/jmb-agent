@@ -179,6 +179,7 @@ class MainWindow(tk.Tk):
         self.pet.on_brief = self.show_brief
         self.pet.on_quit = self.close
         self._build_ui()
+        self._restore_conversation()
         self._icon = theme.load_avatar(64, bg=BG, ring=theme.MINT_DIM, master=self)
         try:
             self.iconphoto(True, self._icon)
@@ -312,6 +313,20 @@ class MainWindow(tk.Tk):
 
     def _ui_state_path(self):
         return config.jmb_home() / "state" / "ui.json"
+
+    def _restore_conversation(self) -> None:
+        """启动时把滚动会话的渲染历史灌进聊天区（D53：conversation.json 是权威）。"""
+        try:
+            from ..chat import load_conversation
+
+            saved = load_conversation()
+        except Exception:  # noqa: BLE001
+            return
+        for row in saved.get("render") or []:
+            role = "user" if row.get("role") == "user" else "assistant"
+            text = str(row.get("text", "")).strip()
+            if text:
+                self.chat.append(text, role)
 
     def _restore_ui_state(self) -> None:
         try:
@@ -464,14 +479,26 @@ class MainWindow(tk.Tk):
         values = ask_model_config(self, {
             "model": jmb_config.get("model", ""),
             "base_url": jmb_config.get("base_url", ""),
+            "context_window": jmb_config.get("context_window", ""),
+            "input_budget": jmb_config.get("input_budget", ""),
             "token_len": len(config.resolve_token().value),
             "effective": effective.value,
             "source": effective.source,
         })
         if values is None:
             return
-        config.save_model_config(values["model"], values["base_url"], values["token"])
-        show_message(self, "已保存", "模型设置已写进 jmb 自己的配置，重启 jmb app 后生效。")
+
+        def _int(raw) -> int:
+            try:
+                return int(str(raw).strip())
+            except ValueError:
+                return 0
+
+        config.save_model_config(values["model"], values["base_url"], values["token"],
+                                 context_window=_int(values.get("context_window", "")),
+                                 input_budget=_int(values.get("input_budget", "")))
+        show_message(self, "已保存", "模型设置已写进 jmb 自己的配置。"
+                     "手机新开会话即生效；桌面 app 需重启。")
 
     def _brief_paths(self) -> tuple:
         today = date.today()
